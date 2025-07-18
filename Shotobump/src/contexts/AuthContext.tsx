@@ -36,7 +36,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   // Handle Spotify redirect on page load (web only)
   useEffect(() => {
-    if (typeof window !== 'undefined' && __DEV__ && isSpotifyRedirect() && !isAuthenticated) {
+    const isWebBrowser = typeof window !== 'undefined' && window.location.hostname;
+    console.log('🔍 AuthContext redirect check:', {
+      isWebBrowser,
+      hasRedirect: isWebBrowser ? isSpotifyRedirect() : false,
+      isAuthenticated,
+      url: typeof window !== 'undefined' ? window.location.href : 'N/A'
+    });
+    
+    if (isWebBrowser && isSpotifyRedirect() && !isAuthenticated) {
       console.log('🔄 Spotify redirect detected, attempting sign in...');
       signIn().catch(error => {
         console.error('Auto sign-in from redirect failed:', error);
@@ -181,7 +189,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       throw error;
     } finally {
       // Only set loading to false if we're not redirecting
-      if (typeof window === 'undefined' || !__DEV__ || !window.location.search.includes('code=')) {
+      const isWebBrowser = typeof window !== 'undefined' && window.location.hostname;
+      if (!isWebBrowser || !window.location.search.includes('code=')) {
         setIsLoading(false);
       }
     }

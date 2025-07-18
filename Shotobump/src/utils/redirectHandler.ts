@@ -29,5 +29,17 @@ export const isSpotifyRedirect = (): boolean => {
   if (typeof window === 'undefined') return false;
   
   const urlParams = new URLSearchParams(window.location.search);
-  return urlParams.has('code') || urlParams.has('error');
+  const hasCode = urlParams.has('code');
+  const hasError = urlParams.has('error');
+  const result = hasCode || hasError;
+  
+  console.log('🔍 isSpotifyRedirect check:', {
+    url: window.location.href,
+    search: window.location.search,
+    hasCode,
+    hasError,
+    result
+  });
+  
+  return result;
 }; 

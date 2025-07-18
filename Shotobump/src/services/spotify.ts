@@ -189,7 +189,7 @@ export class SpotifyService {
       const codeChallenge = base64encode(hashed);
 
       // Store code verifier for web redirect (localStorage is web-only)
-      if (typeof window !== 'undefined' && __DEV__) {
+      if (isWebBrowser) {
         // Store in multiple keys as backup
         const keys = [
           'spotify_code_verifier',
@@ -197,12 +197,12 @@ export class SpotifyService {
           `shotobump_cv_${Date.now()}`
         ];
         
-                 keys.forEach(key => {
-           localStorage.setItem(key, this.codeVerifier!);
-         });
+        keys.forEach(key => {
+          localStorage.setItem(key, this.codeVerifier!);
+        });
         
-                 // Also store in sessionStorage as backup
-         sessionStorage.setItem('spotify_code_verifier', this.codeVerifier!);
+        // Also store in sessionStorage as backup
+        sessionStorage.setItem('spotify_code_verifier', this.codeVerifier!);
         
         console.log('💾 Stored code verifier in multiple locations:', this.codeVerifier.substring(0, 10) + '...');
         console.log('💾 Verification - localStorage:', localStorage.getItem('spotify_code_verifier') ? 'Yes' : 'No');
