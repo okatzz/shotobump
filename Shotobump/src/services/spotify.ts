@@ -60,7 +60,8 @@ export class SpotifyService {
   async authenticate(): Promise<{ user: SpotifyUser; accessToken: string; refreshToken: string }> {
     try {
       // Check if we're handling a redirect (web only)
-      if (typeof window !== 'undefined' && __DEV__ && isSpotifyRedirect()) {
+      const isWebBrowser = typeof window !== 'undefined' && window.location.hostname;
+      if (isWebBrowser && isSpotifyRedirect()) {
         console.log('🔄 Handling Spotify redirect...');
         
         // Clear any old tokens that might be confusing the process
@@ -211,12 +212,22 @@ export class SpotifyService {
       // Determine redirect URI based on environment
       let redirectUri: string;
       
-      if (typeof window !== 'undefined' && __DEV__) {
-        // Web development - use 127.0.0.1 with current port (Spotify allows this)
+      console.log('🔍 Environment detection:');
+      console.log('   typeof window:', typeof window);
+      console.log('   __DEV__:', typeof __DEV__ !== 'undefined' ? __DEV__ : 'undefined');
+      console.log('   window.location.hostname:', typeof window !== 'undefined' ? window.location.hostname : 'N/A');
+      console.log('   window.location.port:', typeof window !== 'undefined' ? window.location.port : 'N/A');
+      
+      // Use the isWebBrowser variable already declared at the top of the function
+      const isDevelopment = typeof __DEV__ !== 'undefined' ? __DEV__ : true; // Default to true if undefined
+      
+      if (isWebBrowser) {
+        // Web environment - use web redirect URI
         redirectUri = getWebRedirectUri();
         logRedirectUriInfo();
+        console.log('🌐 Web mode detected');
       } else {
-        // Mobile/production - use custom scheme
+        // Mobile environment - use custom scheme
         redirectUri = 'shotobump://auth';
         console.log('📱 Mobile mode - using custom scheme redirect URI:', redirectUri);
       }
@@ -234,7 +245,11 @@ export class SpotifyService {
 
       console.log('Auth URL:', authUrl.toString());
 
-      if (typeof window !== 'undefined' && __DEV__) {
+      console.log('🔍 Execution path detection:');
+      console.log('   isWebBrowser:', isWebBrowser);
+      console.log('   isDevelopment:', isDevelopment);
+      
+      if (isWebBrowser) {
         // Web environment - redirect directly
         console.log('🌐 Web environment - redirecting to Spotify...');
         window.location.href = authUrl.toString();
@@ -245,15 +260,23 @@ export class SpotifyService {
       } else {
         // Mobile environment - use WebBrowser
         console.log('📱 Mobile environment - opening auth session...');
+        console.log('🔗 Auth URL:', authUrl.toString());
+        console.log('🔗 Redirect URI:', redirectUri);
+        
         const result = await WebBrowser.openAuthSessionAsync(
           authUrl.toString(),
           redirectUri
         );
 
+        console.log('📱 WebBrowser result:', result);
+
         if (result.type === 'success') {
+          console.log('✅ Authentication successful, processing result...');
           const url = new URL(result.url);
           const code = url.searchParams.get('code');
           const error = url.searchParams.get('error');
+
+          console.log('🔍 URL params - code:', code ? 'present' : 'missing', 'error:', error);
 
           if (error) {
             throw new Error(`Spotify auth error: ${error}`);
@@ -278,8 +301,11 @@ export class SpotifyService {
             refreshToken: tokenResponse.refresh_token || '',
           };
         } else if (result.type === 'cancel') {
+          console.log('❌ Authentication was cancelled by user');
           throw new Error('Authentication was cancelled');
         } else {
+          console.log('❌ Authentication failed with result type:', result.type);
+          console.log('❌ Full result:', JSON.stringify(result, null, 2));
           throw new Error('Authentication failed');
         }
       }

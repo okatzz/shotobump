@@ -11,14 +11,14 @@ export const getWebRedirectUri = (): string => {
     // Check if we're in production (shotobump.com domain)
     const hostname = window.location.hostname;
     if (hostname === 'shotobump.com' || hostname === 'www.shotobump.com') {
-      return 'https://shotobump.com/';
+      return 'https://www.shotobump.com/';
     }
     
     // Development environment
     const port = getCurrentPort();
     return `http://127.0.0.1:${port}/`;
   }
-  return 'https://shotobump.com/'; // Default to production
+  return 'https://www.shotobump.com/'; // Default to production
 };
 
 export const logRedirectUriInfo = (): void => {

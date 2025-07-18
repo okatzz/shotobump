@@ -12,6 +12,7 @@ import {
   ActivityIndicator,
   RefreshControl,
   Modal,
+  Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRoom } from '../contexts/RoomContext';
@@ -20,6 +21,17 @@ import { RoomMember } from '../types';
 import { GameSessionService, GameSession } from '../services/gameSessionService';
 import { SongStackService } from '../services/songStackService';
 import { SpotifyService } from '../services/spotify';
+
+const { width, height } = Dimensions.get('window');
+const isSmallDevice = width < 380 || height < 700;
+const isLargeDevice = width > 500;
+
+// Responsive font size function
+const getResponsiveFontSize = (baseSize: number) => {
+  if (isSmallDevice) return baseSize * 0.8;
+  if (isLargeDevice) return baseSize * 1.1;
+  return baseSize;
+};
 
 interface RoomScreenProps {
   navigation: any;

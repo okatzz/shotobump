@@ -14,6 +14,15 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../contexts/AuthContext';
 
 const { width, height } = Dimensions.get('window');
+const isSmallDevice = width < 380 || height < 700;
+const isLargeDevice = width > 500;
+
+// Responsive font size function
+const getResponsiveFontSize = (baseSize: number) => {
+  if (isSmallDevice) return baseSize * 0.8;
+  if (isLargeDevice) return baseSize * 1.1;
+  return baseSize;
+};
 
 export const LoginScreen: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
@@ -62,6 +71,8 @@ export const LoginScreen: React.FC = () => {
         <ScrollView 
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
+          bounces={true}
+          alwaysBounceVertical={true}
         >
           {/* Logo and Title */}
           <View style={styles.header}>
@@ -140,6 +151,9 @@ export const LoginScreen: React.FC = () => {
               </View>
             )}
           </View>
+          
+          {/* Dynamic spacer to ensure scrolling works */}
+          <View style={{ height: Math.max(50, height * 0.1) }} />
         </ScrollView>
       </LinearGradient>
     </SafeAreaView>
@@ -156,23 +170,23 @@ const styles = StyleSheet.create({
   content: {
     flexGrow: 1,
     justifyContent: 'space-between',
-    paddingHorizontal: 30,
-    paddingVertical: 40,
-    minHeight: height - 100, // Ensure minimum height for proper spacing
+    paddingHorizontal: isSmallDevice ? 20 : 30,
+    paddingVertical: isSmallDevice ? 20 : 40,
+    minHeight: height + 100, // Ensure content can scroll
   },
   header: {
     alignItems: 'center',
-    marginTop: height * 0.1,
+    marginTop: isSmallDevice ? 20 : height * 0.05,
   },
   logoContainer: {
-    width: 140,
-    height: 140,
+    width: isSmallDevice ? 100 : isLargeDevice ? 160 : 140,
+    height: isSmallDevice ? 100 : isLargeDevice ? 160 : 140,
     backgroundColor: '#8B4B9B',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 30,
-    borderRadius: 70,
-    borderWidth: 6,
+    marginBottom: isSmallDevice ? 20 : 30,
+    borderRadius: isSmallDevice ? 50 : isLargeDevice ? 80 : 70,
+    borderWidth: isSmallDevice ? 4 : 6,
     borderColor: '#F5E6D3',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 8 },
@@ -181,25 +195,25 @@ const styles = StyleSheet.create({
     elevation: 10,
   },
   logoText: {
-    fontSize: 70,
+    fontSize: isSmallDevice ? 50 : isLargeDevice ? 80 : 70,
     color: '#F5E6D3',
     textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 2, height: 2 },
     textShadowRadius: 4,
   },
   title: {
-    fontSize: 48,
+    fontSize: getResponsiveFontSize(48),
     fontWeight: 'bold',
     color: '#F5E6D3',
-    marginBottom: 15,
+    marginBottom: isSmallDevice ? 10 : 15,
     textAlign: 'center',
-    letterSpacing: 3,
+    letterSpacing: isSmallDevice ? 2 : 3,
     textShadowColor: '#8B4B9B',
     textShadowOffset: { width: 4, height: 4 },
     textShadowRadius: 8,
   },
   subtitle: {
-    fontSize: 20,
+    fontSize: getResponsiveFontSize(20),
     color: '#F5E6D3',
     textAlign: 'center',
     fontWeight: '600',
@@ -210,11 +224,11 @@ const styles = StyleSheet.create({
   featuresContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    marginVertical: 50,
+    marginVertical: isSmallDevice ? 30 : 50,
     backgroundColor: 'rgba(139, 75, 155, 0.3)',
-    paddingVertical: 30,
+    paddingVertical: isSmallDevice ? 20 : 30,
     borderRadius: 25,
-    borderWidth: 4,
+    borderWidth: isSmallDevice ? 3 : 4,
     borderColor: '#F5E6D3',
   },
   feature: {
@@ -222,15 +236,15 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   featureIcon: {
-    fontSize: 40,
-    marginBottom: 12,
+    fontSize: getResponsiveFontSize(40),
+    marginBottom: isSmallDevice ? 8 : 12,
     textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 2, height: 2 },
     textShadowRadius: 4,
   },
   featureText: {
     color: '#F5E6D3',
-    fontSize: 16,
+    fontSize: getResponsiveFontSize(16),
     fontWeight: 'bold',
     textAlign: 'center',
     textShadowColor: 'rgba(0, 0, 0, 0.5)',
@@ -243,11 +257,11 @@ const styles = StyleSheet.create({
   },
   spotifyButton: {
     backgroundColor: '#F5E6D3',
-    paddingVertical: 20,
-    paddingHorizontal: 40,
-    width: width * 0.8,
+    paddingVertical: isSmallDevice ? 16 : 20,
+    paddingHorizontal: isSmallDevice ? 30 : 40,
+    width: isSmallDevice ? width * 0.9 : width * 0.8,
     borderRadius: 50,
-    borderWidth: 4,
+    borderWidth: isSmallDevice ? 3 : 4,
     borderColor: '#8B4B9B',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 6 },
@@ -261,23 +275,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   spotifyIcon: {
-    fontSize: 28,
+    fontSize: getResponsiveFontSize(28),
     color: '#8B4B9B',
-    marginRight: 15,
+    marginRight: isSmallDevice ? 10 : 15,
     fontWeight: 'bold',
   },
   buttonText: {
     color: '#8B4B9B',
-    fontSize: 20,
+    fontSize: getResponsiveFontSize(20),
     fontWeight: 'bold',
   },
   disclaimer: {
     color: '#F5E6D3',
-    fontSize: 16,
+    fontSize: getResponsiveFontSize(16),
     textAlign: 'center',
-    marginTop: 25,
-    paddingHorizontal: 20,
-    lineHeight: 22,
+    marginTop: isSmallDevice ? 20 : 25,
+    paddingHorizontal: isSmallDevice ? 15 : 20,
+    lineHeight: isSmallDevice ? 20 : 22,
     fontWeight: '600',
     textShadowColor: 'rgba(139, 75, 155, 0.6)',
     textShadowOffset: { width: 1, height: 1 },

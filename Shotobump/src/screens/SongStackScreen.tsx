@@ -10,6 +10,7 @@ import {
   Alert,
   ActivityIndicator,
   TextInput,
+  Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../contexts/AuthContext';
@@ -18,6 +19,17 @@ import { SongStackService, UserSongStack } from '../services/songStackService';
 import { SpotifyTrack } from '../types';
 import { useRoom } from '../contexts/RoomContext';
 import { Audio } from 'expo-av';
+
+const { width, height } = Dimensions.get('window');
+const isSmallDevice = width < 380 || height < 700;
+const isLargeDevice = width > 500;
+
+// Responsive font size function
+const getResponsiveFontSize = (baseSize: number) => {
+  if (isSmallDevice) return baseSize * 0.8;
+  if (isLargeDevice) return baseSize * 1.1;
+  return baseSize;
+};
 
 interface SongStackScreenProps {
   navigation: any;

@@ -10,6 +10,7 @@ import {
   ScrollView,
   Image,
   ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../contexts/AuthContext';
@@ -18,6 +19,17 @@ import { useRoom } from '../contexts/RoomContext';
 interface HomeScreenProps {
   navigation: any;
 }
+
+const { width, height } = Dimensions.get('window');
+const isSmallDevice = width < 380 || height < 700;
+const isLargeDevice = width > 500;
+
+// Responsive font size function
+const getResponsiveFontSize = (baseSize: number) => {
+  if (isSmallDevice) return baseSize * 0.8;
+  if (isLargeDevice) return baseSize * 1.1;
+  return baseSize;
+};
 
 export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
   const [roomCode, setRoomCode] = useState('');
@@ -69,6 +81,8 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         <ScrollView 
           contentContainerStyle={styles.content}
           showsVerticalScrollIndicator={false}
+          bounces={true}
+          alwaysBounceVertical={true}
         >
           {/* Header */}
           <View style={styles.header}>
@@ -175,6 +189,9 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
               </View>
             </View>
           </View>
+          
+          {/* Dynamic spacer to ensure scrolling works */}
+          <View style={{ height: Math.max(50, height * 0.1) }} />
         </ScrollView>
       </LinearGradient>
     </SafeAreaView>
@@ -190,8 +207,9 @@ const styles = StyleSheet.create({
   },
   content: {
     flexGrow: 1,
-    padding: 15,
-    paddingBottom: 30,
+    padding: isSmallDevice ? 12 : 15,
+    paddingBottom: isSmallDevice ? 20 : 30,
+    minHeight: height + 100, // Ensure content can scroll
   },
   header: {
     flexDirection: 'row',
