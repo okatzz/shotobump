@@ -17,7 +17,10 @@ const queryClient = new QueryClient();
 function AppNavigator() {
   const { isAuthenticated, isLoading } = useAuth();
 
+  console.log('🔍 AppNavigator state:', { isAuthenticated, isLoading });
+
   if (isLoading) {
+    console.log('⏳ Showing loading screen...');
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#1DB954" />
@@ -25,6 +28,8 @@ function AppNavigator() {
     );
   }
 
+  console.log('🎯 Navigation decision:', isAuthenticated ? 'Authenticated screens' : 'Login screen');
+  
   return (
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>

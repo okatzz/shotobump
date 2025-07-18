@@ -1751,8 +1751,8 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
         <View style={styles.modalOverlay}>
           <View style={styles.votingModal}>
             <ScrollView 
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ flexGrow: 1 }}
+              showsVerticalScrollIndicator={true}
+              indicatorStyle="white"
               style={{ maxHeight: screenHeight * 0.7 }}
             >
             <Text style={styles.votingTitle}>Vote on the Answer</Text>
@@ -2394,9 +2394,11 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
         <ScrollView 
           style={styles.scrollView}
           contentContainerStyle={styles.scrollViewContent}
-          showsVerticalScrollIndicator={false}
+          showsVerticalScrollIndicator={true}
           bounces={true}
           alwaysBounceVertical={true}
+          scrollEnabled={true}
+          nestedScrollEnabled={true}
         >
           {gamePhase === 'pre_game_countdown' && renderPreGameCountdown()}
           
@@ -2427,8 +2429,8 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
         <View style={styles.modalOverlay}>
           <View style={styles.turnSummaryModal}>
             <ScrollView 
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ flexGrow: 1 }}
+              showsVerticalScrollIndicator={true}
+              indicatorStyle="white"
               style={{ maxHeight: screenHeight * 0.8 }}
             >
             <Text style={styles.summaryTitle}>Turn Complete!</Text>
@@ -2529,16 +2531,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
               <Text style={styles.waitingText}>Waiting for host to continue...</Text>
             )}
             
-            {/* Debug info */}
-            {__DEV__ && (
-              <View style={{ padding: 10, backgroundColor: 'rgba(0,0,0,0.5)', margin: 10 }}>
-                <Text style={{ color: 'white', fontSize: 12 }}>
-                  DEBUG: isHost={String(isHost)}, showTurnSummary={String(showTurnSummary)}, 
-                  turnResult={turnResult ? 'exists' : 'null'}, 
-                  userId={user?.id}
-                </Text>
-              </View>
-            )}
+
             </ScrollView>
           </View>
         </View>
@@ -2560,7 +2553,7 @@ const styles = StyleSheet.create({
   scrollViewContent: {
     paddingBottom: isSmallDevice ? 50 : 40,
     paddingTop: 10,
-    minHeight: screenHeight + 200, // Ensure content exceeds screen height to trigger scrolling
+    // Remove minHeight constraint that was preventing proper scrolling
   },
   countdownContainer: {
     minHeight: screenHeight - 100, // Use actual height instead of flex

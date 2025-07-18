@@ -57,6 +57,11 @@ export class SpotifyService {
     return SpotifyService.instance;
   }
 
+  private async generateCodeChallenge(codeVerifier: string): Promise<string> {
+    const hashed = await sha256(codeVerifier);
+    return base64encode(hashed);
+  }
+
   async authenticate(): Promise<{ user: SpotifyUser; accessToken: string; refreshToken: string }> {
     try {
       // Check if we're handling a redirect (web only)
@@ -101,35 +106,19 @@ export class SpotifyService {
         }
         
         if (!storedCodeVerifier) {
-          // Try to find it in specific code verifier keys only
-          const possibleKeys = Object.keys(localStorage).filter(key => 
-            (key.includes('code_verifier') || key.includes('cv_')) &&
-            !key.includes('token') && !key.includes('access') && !key.includes('refresh')
+          // Try timestamped keys as last resort
+          const timestampedKeys = Object.keys(localStorage).filter(key => 
+            key.startsWith('shotobump_cv_')
           );
           
-          for (const key of possibleKeys) {
-            const value = localStorage.getItem(key);
-            if (value && value.length > 40) { // Code verifiers are typically 43+ chars
-              console.log(`🔍 Found potential code verifier in key: ${key}`);
-              storedCodeVerifier = value;
-              break;
-            }
+          if (timestampedKeys.length > 0) {
+            // Sort by timestamp (newest first) and take the most recent
+            timestampedKeys.sort().reverse();
+            const mostRecentKey = timestampedKeys[0];
+            storedCodeVerifier = localStorage.getItem(mostRecentKey);
+            console.log(`🔍 Found code verifier in timestamped key: ${mostRecentKey}`);
           }
         }
-        
-        console.log('🔍 Debug info:');
-        console.log('   Authorization code:', code ? 'Present' : 'Missing');
-        console.log('   Stored code verifier:', storedCodeVerifier ? 'Present' : 'Missing');
-        console.log('   localStorage keys:', Object.keys(localStorage));
-        console.log('   All localStorage data:', localStorage);
-        
-        // Try to find any key that might contain our code verifier
-        const allKeys = Object.keys(localStorage);
-        const spotifyKeys = allKeys.filter(key => key.includes('spotify') || key.includes('code'));
-        console.log('   Spotify-related keys:', spotifyKeys);
-        spotifyKeys.forEach(key => {
-          console.log(`   ${key}:`, localStorage.getItem(key)?.substring(0, 20) + '...');
-        });
         
         if (code && storedCodeVerifier) {
           this.codeVerifier = storedCodeVerifier;
@@ -167,6 +156,8 @@ export class SpotifyService {
           // Get user profile
           const user = await this.getCurrentUser();
           
+          console.log('✅ Spotify authentication completed successfully');
+          
           return {
             user,
             accessToken: tokenResponse.access_token,
@@ -185,129 +176,40 @@ export class SpotifyService {
 
       // Generate PKCE parameters
       this.codeVerifier = generateRandomString(64);
-      const hashed = await sha256(this.codeVerifier);
-      const codeChallenge = base64encode(hashed);
-
-      // Store code verifier for web redirect (localStorage is web-only)
-      if (isWebBrowser) {
-        // Store in multiple keys as backup
-        const keys = [
-          'spotify_code_verifier',
-          'shotobump_code_verifier',
-          `shotobump_cv_${Date.now()}`
-        ];
+      const codeChallenge = await this.generateCodeChallenge(this.codeVerifier);
+      
+      // Store code verifier with timestamp for better cleanup
+      const timestamp = Date.now();
+      const storageKey = `shotobump_cv_${timestamp}`;
+      
+      if (typeof window !== 'undefined') {
+        localStorage.setItem(storageKey, this.codeVerifier);
+        // Also store in standard location for compatibility
+        localStorage.setItem('spotify_code_verifier', this.codeVerifier);
+        localStorage.setItem('shotobump_code_verifier', this.codeVerifier);
+        sessionStorage.setItem('spotify_code_verifier', this.codeVerifier);
         
-        keys.forEach(key => {
-          localStorage.setItem(key, this.codeVerifier!);
-        });
-        
-        // Also store in sessionStorage as backup
-        sessionStorage.setItem('spotify_code_verifier', this.codeVerifier!);
-        
-        console.log('💾 Stored code verifier in multiple locations:', this.codeVerifier.substring(0, 10) + '...');
-        console.log('💾 Verification - localStorage:', localStorage.getItem('spotify_code_verifier') ? 'Yes' : 'No');
-        console.log('💾 Verification - sessionStorage:', sessionStorage.getItem('spotify_code_verifier') ? 'Yes' : 'No');
+        console.log('💾 Code verifier stored in multiple locations for reliability');
       }
-
-      // Determine redirect URI based on environment
-      let redirectUri: string;
-      
-      console.log('🔍 Environment detection:');
-      console.log('   typeof window:', typeof window);
-      console.log('   __DEV__:', typeof __DEV__ !== 'undefined' ? __DEV__ : 'undefined');
-      console.log('   window.location.hostname:', typeof window !== 'undefined' ? window.location.hostname : 'N/A');
-      console.log('   window.location.port:', typeof window !== 'undefined' ? window.location.port : 'N/A');
-      
-      // Use the isWebBrowser variable already declared at the top of the function
-      const isDevelopment = typeof __DEV__ !== 'undefined' ? __DEV__ : true; // Default to true if undefined
-      
-      if (isWebBrowser) {
-        // Web environment - use web redirect URI
-        redirectUri = getWebRedirectUri();
-        logRedirectUriInfo();
-        console.log('🌐 Web mode detected');
-      } else {
-        // Mobile environment - use custom scheme
-        redirectUri = 'shotobump://auth';
-        console.log('📱 Mobile mode - using custom scheme redirect URI:', redirectUri);
-      }
-      
-      console.log('Redirect URI:', redirectUri);
 
       // Build authorization URL
+      const redirectUri = getWebRedirectUri();
       const authUrl = new URL('https://accounts.spotify.com/authorize');
-      authUrl.searchParams.append('client_id', CLIENT_ID);
-      authUrl.searchParams.append('response_type', 'code');
-      authUrl.searchParams.append('redirect_uri', redirectUri);
-      authUrl.searchParams.append('code_challenge_method', 'S256');
-      authUrl.searchParams.append('code_challenge', codeChallenge);
-      authUrl.searchParams.append('scope', SCOPES.join(' '));
+      authUrl.searchParams.set('client_id', CLIENT_ID);
+      authUrl.searchParams.set('response_type', 'code');
+      authUrl.searchParams.set('redirect_uri', redirectUri);
+      authUrl.searchParams.set('code_challenge_method', 'S256');
+      authUrl.searchParams.set('code_challenge', codeChallenge);
+      authUrl.searchParams.set('scope', 'user-read-private user-read-email user-top-read playlist-read-private user-read-playback-state user-modify-playback-state');
 
-      console.log('Auth URL:', authUrl.toString());
-
-      console.log('🔍 Execution path detection:');
-      console.log('   isWebBrowser:', isWebBrowser);
-      console.log('   isDevelopment:', isDevelopment);
+      console.log('🔗 Redirecting to Spotify authorization...');
+      console.log('📍 Redirect URI:', redirectUri);
       
-      if (isWebBrowser) {
-        // Web environment - redirect directly
-        console.log('🌐 Web environment - redirecting to Spotify...');
+      if (typeof window !== 'undefined') {
         window.location.href = authUrl.toString();
-        
-        // This will cause a page redirect, so we won't reach the return statement
-        // The actual token exchange will happen when the user is redirected back
         throw new Error('Redirecting to Spotify...');
       } else {
-        // Mobile environment - use WebBrowser
-        console.log('📱 Mobile environment - opening auth session...');
-        console.log('🔗 Auth URL:', authUrl.toString());
-        console.log('🔗 Redirect URI:', redirectUri);
-        
-        const result = await WebBrowser.openAuthSessionAsync(
-          authUrl.toString(),
-          redirectUri
-        );
-
-        console.log('📱 WebBrowser result:', result);
-
-        if (result.type === 'success') {
-          console.log('✅ Authentication successful, processing result...');
-          const url = new URL(result.url);
-          const code = url.searchParams.get('code');
-          const error = url.searchParams.get('error');
-
-          console.log('🔍 URL params - code:', code ? 'present' : 'missing', 'error:', error);
-
-          if (error) {
-            throw new Error(`Spotify auth error: ${error}`);
-          }
-
-          if (!code) {
-            throw new Error('No authorization code received');
-          }
-
-          // Exchange code for tokens
-          const tokenResponse = await this.exchangeCodeForTokens(code, redirectUri);
-          
-          this.accessToken = tokenResponse.access_token;
-          this.refreshToken = tokenResponse.refresh_token || null;
-
-          // Get user profile
-          const user = await this.getCurrentUser();
-          
-          return {
-            user,
-            accessToken: tokenResponse.access_token,
-            refreshToken: tokenResponse.refresh_token || '',
-          };
-        } else if (result.type === 'cancel') {
-          console.log('❌ Authentication was cancelled by user');
-          throw new Error('Authentication was cancelled');
-        } else {
-          console.log('❌ Authentication failed with result type:', result.type);
-          console.log('❌ Full result:', JSON.stringify(result, null, 2));
-          throw new Error('Authentication failed');
-        }
+        throw new Error('Spotify authentication is only supported in web browsers');
       }
     } catch (error) {
       console.error('Spotify authentication error:', error);
@@ -674,6 +576,27 @@ export class SpotifyService {
     this.accessToken = null;
     this.refreshToken = null;
     this.codeVerifier = null;
+    
+    // Clear all Spotify-related storage (web only)
+    if (typeof window !== 'undefined') {
+      // Clear localStorage
+      const keysToRemove = Object.keys(localStorage).filter(key => 
+        key.includes('spotify') || key.includes('shotobump_cv_') || key.includes('code_verifier')
+      );
+      keysToRemove.forEach(key => {
+        localStorage.removeItem(key);
+      });
+      
+      // Clear sessionStorage
+      const sessionKeysToRemove = Object.keys(sessionStorage).filter(key => 
+        key.includes('spotify') || key.includes('code_verifier')
+      );
+      sessionKeysToRemove.forEach(key => {
+        sessionStorage.removeItem(key);
+      });
+      
+      console.log('🧹 Cleared all Spotify-related storage');
+    }
   }
 
   // Test function to verify redirect URI detection

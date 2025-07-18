@@ -59,7 +59,6 @@ export const LoginScreen: React.FC = () => {
       setIsLoading(false);
     }
   };
-
   return (
     <SafeAreaView style={styles.container}>
       <LinearGradient
@@ -70,9 +69,12 @@ export const LoginScreen: React.FC = () => {
       >
         <ScrollView 
           contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
+          showsVerticalScrollIndicator={true}
+          indicatorStyle="white"
           bounces={true}
           alwaysBounceVertical={true}
+          scrollEnabled={true}
+          nestedScrollEnabled={true}
         >
           {/* Logo and Title */}
           <View style={styles.header}>
@@ -168,11 +170,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    flexGrow: 1,
-    justifyContent: 'space-between',
     paddingHorizontal: isSmallDevice ? 20 : 30,
     paddingVertical: isSmallDevice ? 20 : 40,
-    minHeight: height + 100, // Ensure content can scroll
+    // Remove flexGrow to allow proper scrolling
   },
   header: {
     alignItems: 'center',

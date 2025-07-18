@@ -48,7 +48,7 @@ const RoomScreen: React.FC<RoomScreenProps> = ({ navigation }) => {
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [devices, setDevices] = useState<any[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
-  const [isTestingPlayback, setIsTestingPlayback] = useState(false);
+
   const [deviceError, setDeviceError] = useState<string | null>(null);
 
   const gameSessionService = GameSessionService.getInstance();
@@ -218,22 +218,7 @@ const RoomScreen: React.FC<RoomScreenProps> = ({ navigation }) => {
     }
   }, [showDeviceModal]);
 
-  const handleTestPlayback = async () => {
-    if (!selectedDeviceId) return;
-    setIsTestingPlayback(true);
-    setDeviceError(null);
-    try {
-      // Use a short, public Spotify track URI (e.g., "spotify:track:11dFghVXANMlKmJXsNCbNl" = Daft Punk - Get Lucky (Radio Edit))
-      await spotifyService.playTrackOnActiveDevice('spotify:track:11dFghVXANMlKmJXsNCbNl', 0, selectedDeviceId);
-      Alert.alert('Test Playback', 'If your device is active, you should hear music now!');
-      // Store the selected device in context for use in gameplay
-      setSelectedSpotifyDeviceId(selectedDeviceId);
-    } catch (err) {
-      setDeviceError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIsTestingPlayback(false);
-    }
-  };
+
 
   const renderMember = (member: RoomMember, index: number) => (
     <View key={member.user_id} style={styles.memberCard}>
@@ -270,10 +255,15 @@ const RoomScreen: React.FC<RoomScreenProps> = ({ navigation }) => {
         <ScrollView 
           style={styles.scrollView}
           contentContainerStyle={styles.scrollViewContent}
-          showsVerticalScrollIndicator={false}
+          showsVerticalScrollIndicator={true}
+          indicatorStyle="white"
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={handleRefresh} />
           }
+          bounces={true}
+          alwaysBounceVertical={true}
+          scrollEnabled={true}
+          nestedScrollEnabled={true}
         >
           {/* Header */}
           <View style={styles.header}>
@@ -325,12 +315,7 @@ const RoomScreen: React.FC<RoomScreenProps> = ({ navigation }) => {
             )}
           </View>
 
-          {/* Debug Info */}
-          <View style={styles.debugSection}>
-            <Text style={styles.debugText}>
-              Debug: isHost={isHost ? 'YES' : 'NO'} | state={currentRoom.state} | members={roomMembers.length} | gameSession={currentGameSession ? 'EXISTS' : 'NONE'}
-            </Text>
-          </View>
+
 
           {/* Game Controls */}
           <View style={styles.gameControls}>
@@ -397,6 +382,9 @@ const RoomScreen: React.FC<RoomScreenProps> = ({ navigation }) => {
               <Text style={styles.errorText}>{error}</Text>
             </View>
           )}
+          
+          {/* Dynamic spacer to ensure scrolling works */}
+          <View style={{ height: Math.max(50, height * 0.1) }} />
         </ScrollView>
 
         {/* Game Starting Banner */}
@@ -447,18 +435,7 @@ const RoomScreen: React.FC<RoomScreenProps> = ({ navigation }) => {
                 ))}
               </ScrollView>
             )}
-            <TouchableOpacity
-              style={[
-                styles.testButton,
-                (!selectedDeviceId || isTestingPlayback) && styles.testButtonDisabled
-              ]}
-              onPress={handleTestPlayback}
-              disabled={!selectedDeviceId || isTestingPlayback}
-            >
-              <Text style={styles.testButtonText}>
-                {isTestingPlayback ? 'Testing...' : 'Test Playback'}
-              </Text>
-            </TouchableOpacity>
+
             <TouchableOpacity
               style={styles.closeButton}
               onPress={() => setShowDeviceModal(false)}
@@ -483,8 +460,8 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollViewContent: {
-    flexGrow: 1,
-    paddingBottom: 20,
+    paddingBottom: isSmallDevice ? 30 : 20,
+    // Remove flexGrow to allow proper scrolling
   },
   loadingContainer: {
     flex: 1,
@@ -502,32 +479,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
+    paddingHorizontal: isSmallDevice ? 15 : 20,
+    paddingVertical: isSmallDevice ? 12 : 16,
     backgroundColor: 'rgba(139, 75, 155, 0.4)',
     borderBottomLeftRadius: 25,
     borderBottomRightRadius: 25,
-    borderBottomWidth: 4,
+    borderBottomWidth: isSmallDevice ? 3 : 4,
     borderBottomColor: '#F5E6D3',
   },
   backButton: {
-    width: 50,
-    height: 50,
+    width: isSmallDevice ? 45 : 50,
+    height: isSmallDevice ? 45 : 50,
     backgroundColor: '#8B4B9B',
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 25,
-    borderWidth: 3,
+    borderRadius: isSmallDevice ? 22 : 25,
+    borderWidth: isSmallDevice ? 2 : 3,
     borderColor: '#F5E6D3',
   },
   backButtonText: {
     color: '#F5E6D3',
-    fontSize: 28,
+    fontSize: getResponsiveFontSize(28),
     fontWeight: 'bold',
   },
   headerTitle: {
     color: '#F5E6D3',
-    fontSize: 22,
+    fontSize: getResponsiveFontSize(22),
     fontWeight: 'bold',
     textShadowColor: 'rgba(0, 0, 0, 0.3)',
     textShadowOffset: { width: 2, height: 2 },
@@ -548,13 +525,13 @@ const styles = StyleSheet.create({
   },
   roomCodeSection: {
     alignItems: 'center',
-    paddingHorizontal: 20,
-    marginBottom: 30,
+    paddingHorizontal: isSmallDevice ? 15 : 20,
+    marginBottom: isSmallDevice ? 20 : 30,
     backgroundColor: 'rgba(139, 75, 155, 0.4)',
-    paddingVertical: 25,
-    marginHorizontal: 20,
+    paddingVertical: isSmallDevice ? 20 : 25,
+    marginHorizontal: isSmallDevice ? 15 : 20,
     borderRadius: 25,
-    borderWidth: 4,
+    borderWidth: isSmallDevice ? 3 : 4,
     borderColor: '#F5E6D3',
   },
   roomCodeLabel: {
@@ -581,10 +558,10 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   roomCode: {
-    fontSize: 36,
+    fontSize: getResponsiveFontSize(36),
     fontWeight: 'bold',
     color: '#8B4B9B',
-    letterSpacing: 6,
+    letterSpacing: isSmallDevice ? 4 : 6,
   },
   copyHint: {
     fontSize: 14,
@@ -826,22 +803,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontWeight: 'bold',
   },
-  debugSection: {
-    backgroundColor: 'rgba(139, 75, 155, 0.4)',
-    marginHorizontal: 20,
-    marginBottom: 10,
-    padding: 15,
-    borderRadius: 15,
-    borderWidth: 2,
-    borderColor: '#F5E6D3',
-  },
-  debugText: {
-    color: '#F5E6D3',
-    fontSize: 12,
-    fontFamily: 'monospace',
-    fontWeight: '600',
-    opacity: 0.8,
-  },
+
   gameStartBanner: {
     position: 'absolute',
     top: 0,
@@ -941,21 +903,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     fontSize: 14,
   },
-  testButton: {
-    backgroundColor: '#1DB954',
-    padding: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  testButtonDisabled: {
-    backgroundColor: '#ccc',
-  },
-  testButtonText: {
-    color: '#fff',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
+
   closeButton: {
     alignItems: 'center',
     padding: 8,

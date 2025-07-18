@@ -11,6 +11,7 @@ import {
   Image,
   ActivityIndicator,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../contexts/AuthContext';
@@ -59,15 +60,15 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
     }
   };
 
-  const handleSignOut = () => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Sign Out', style: 'destructive', onPress: signOut },
-      ]
-    );
+  const handleSignOut = async () => {
+    try {
+      console.log('🚪 Sign out initiated...');
+      await signOut();
+      console.log('✅ Sign out completed successfully');
+    } catch (error) {
+      console.error('❌ Sign out failed:', error);
+      Alert.alert('Error', 'Failed to sign out. Please try again.');
+    }
   };
 
   return (
@@ -79,10 +80,17 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
         end={{ x: 1, y: 1 }}
       >
         <ScrollView 
+          style={styles.scrollView}
           contentContainerStyle={styles.content}
-          showsVerticalScrollIndicator={false}
+          showsVerticalScrollIndicator={true}
+          indicatorStyle="white"
           bounces={true}
           alwaysBounceVertical={true}
+          scrollEnabled={true}
+          nestedScrollEnabled={true}
+          keyboardShouldPersistTaps="handled"
+          overScrollMode="always"
+
         >
           {/* Header */}
           <View style={styles.header}>
@@ -188,12 +196,59 @@ export const HomeScreen: React.FC<HomeScreenProps> = ({ navigation }) => {
                 </View>
               </View>
             </View>
+
+            {/* Additional Info Section */}
+            <View style={styles.additionalInfoContainer}>
+              <Text style={styles.additionalInfoTitle}>Game Features</Text>
+              <View style={styles.featuresList}>
+                <View style={styles.featureItem}>
+                  <Text style={styles.featureIcon}>🎵</Text>
+                  <Text style={styles.featureText}>Real-time music playback</Text>
+                </View>
+                <View style={styles.featureItem}>
+                  <Text style={styles.featureIcon}>🏆</Text>
+                  <Text style={styles.featureText}>Score tracking and leaderboards</Text>
+                </View>
+                <View style={styles.featureItem}>
+                  <Text style={styles.featureIcon}>👥</Text>
+                  <Text style={styles.featureText}>Multiplayer support</Text>
+                </View>
+                <View style={styles.featureItem}>
+                  <Text style={styles.featureIcon}>🎯</Text>
+                  <Text style={styles.featureText}>Challenge and voting system</Text>
+                </View>
+              </View>
+            </View>
+
+            {/* Footer Section */}
+            <View style={styles.footerContainer}>
+              <Text style={styles.footerTitle}>Ready to Start?</Text>
+              <Text style={styles.footerText}>
+                Create a room and invite your friends to begin the ultimate music challenge!
+              </Text>
+              <View style={styles.footerStats}>
+                <View style={styles.statItem}>
+                  <Text style={styles.statNumber}>🎵</Text>
+                  <Text style={styles.statLabel}>Spotify Integration</Text>
+                </View>
+                <View style={styles.statItem}>
+                  <Text style={styles.statNumber}>⚡</Text>
+                  <Text style={styles.statLabel}>Real-time Sync</Text>
+                </View>
+                <View style={styles.statItem}>
+                  <Text style={styles.statNumber}>🏅</Text>
+                  <Text style={styles.statLabel}>Competitive</Text>
+                </View>
+              </View>
+            </View>
           </View>
           
           {/* Dynamic spacer to ensure scrolling works */}
           <View style={{ height: Math.max(50, height * 0.1) }} />
         </ScrollView>
       </LinearGradient>
+      
+
     </SafeAreaView>
   );
 };
@@ -203,23 +258,30 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   gradient: {
-    flex: 1,
+    flex: Platform.OS === 'web' ? undefined : 1,
+    height: Platform.OS === 'web' ? height : undefined, // Fixed height for web
+    // Ensure gradient doesn't interfere with scrolling
+  },
+  scrollView: {
+    height: Platform.OS === 'web' ? height - 100 : undefined, // Fixed height for web only
+    flex: Platform.OS === 'web' ? undefined : 1, // Use flex for mobile
+    // Explicitly set height to constrain ScrollView
   },
   content: {
-    flexGrow: 1,
     padding: isSmallDevice ? 12 : 15,
     paddingBottom: isSmallDevice ? 20 : 30,
-    minHeight: height + 100, // Ensure content can scroll
+    minHeight: Platform.OS === 'web' ? height + 800 : height + 500, // Extra height for web
+    // Remove flexGrow to allow proper scrolling
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 30,
+    marginBottom: isSmallDevice ? 20 : 30,
     backgroundColor: 'rgba(139, 75, 155, 0.4)',
-    padding: 20,
+    padding: isSmallDevice ? 15 : 20,
     borderRadius: 25,
-    borderWidth: 4,
+    borderWidth: isSmallDevice ? 3 : 4,
     borderColor: '#F5E6D3',
   },
   userInfo: {
@@ -228,27 +290,27 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   avatar: {
-    width: 60,
-    height: 60,
-    marginRight: 15,
-    borderRadius: 30,
-    borderWidth: 4,
+    width: isSmallDevice ? 50 : 60,
+    height: isSmallDevice ? 50 : 60,
+    marginRight: isSmallDevice ? 12 : 15,
+    borderRadius: isSmallDevice ? 25 : 30,
+    borderWidth: isSmallDevice ? 3 : 4,
     borderColor: '#F5E6D3',
   },
   avatarPlaceholder: {
-    width: 60,
-    height: 60,
+    width: isSmallDevice ? 50 : 60,
+    height: isSmallDevice ? 50 : 60,
     backgroundColor: '#8B4B9B',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 15,
-    borderRadius: 30,
-    borderWidth: 4,
+    marginRight: isSmallDevice ? 12 : 15,
+    borderRadius: isSmallDevice ? 25 : 30,
+    borderWidth: isSmallDevice ? 3 : 4,
     borderColor: '#F5E6D3',
   },
   avatarText: {
     color: '#F5E6D3',
-    fontSize: 24,
+    fontSize: getResponsiveFontSize(24),
     fontWeight: 'bold',
   },
   userDetails: {
@@ -256,13 +318,13 @@ const styles = StyleSheet.create({
   },
   welcomeText: {
     color: '#F5E6D3',
-    fontSize: 16,
+    fontSize: getResponsiveFontSize(16),
     fontWeight: '600',
     opacity: 0.9,
   },
   userName: {
     color: '#F5E6D3',
-    fontSize: 20,
+    fontSize: getResponsiveFontSize(20),
     fontWeight: 'bold',
     textShadowColor: 'rgba(0, 0, 0, 0.3)',
     textShadowOffset: { width: 1, height: 1 },
@@ -282,21 +344,21 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   actionsContainer: {
-    flex: 1,
+    // Remove flex: 1 to allow proper scrolling
   },
   title: {
-    fontSize: 36,
+    fontSize: getResponsiveFontSize(36),
     fontWeight: 'bold',
     color: '#F5E6D3',
     textAlign: 'center',
-    marginBottom: 40,
+    marginBottom: isSmallDevice ? 25 : 40,
     textShadowColor: '#8B4B9B',
     textShadowOffset: { width: 4, height: 4 },
     textShadowRadius: 8,
-    letterSpacing: 2,
+    letterSpacing: isSmallDevice ? 1 : 2,
   },
   actionButton: {
-    marginBottom: 30,
+    marginBottom: isSmallDevice ? 20 : 30,
     overflow: 'hidden',
     borderRadius: 30,
     shadowColor: '#000',
@@ -307,8 +369,8 @@ const styles = StyleSheet.create({
   },
   buttonGradient: {
     backgroundColor: '#F5E6D3',
-    padding: 25,
-    borderWidth: 4,
+    padding: isSmallDevice ? 20 : 25,
+    borderWidth: isSmallDevice ? 3 : 4,
     borderColor: '#8B4B9B',
     borderRadius: 30,
   },
@@ -317,36 +379,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   buttonIcon: {
-    fontSize: 40,
-    marginRight: 20,
+    fontSize: getResponsiveFontSize(40),
+    marginRight: isSmallDevice ? 15 : 20,
     textShadowColor: 'rgba(0, 0, 0, 0.3)',
     textShadowOffset: { width: 2, height: 2 },
     textShadowRadius: 4,
   },
   buttonTitle: {
     color: '#8B4B9B',
-    fontSize: 24,
+    fontSize: getResponsiveFontSize(24),
     fontWeight: 'bold',
   },
   buttonSubtitle: {
     color: '#8B4B9B',
-    fontSize: 16,
+    fontSize: getResponsiveFontSize(16),
     fontWeight: '600',
     opacity: 0.8,
   },
   joinSection: {
-    marginBottom: 30,
+    marginBottom: isSmallDevice ? 20 : 30,
     backgroundColor: 'rgba(139, 75, 155, 0.4)',
-    padding: 20,
+    padding: isSmallDevice ? 15 : 20,
     borderRadius: 25,
-    borderWidth: 4,
+    borderWidth: isSmallDevice ? 3 : 4,
     borderColor: '#F5E6D3',
   },
   sectionTitle: {
     color: '#F5E6D3',
-    fontSize: 22,
+    fontSize: getResponsiveFontSize(22),
     fontWeight: 'bold',
-    marginBottom: 20,
+    marginBottom: isSmallDevice ? 15 : 20,
     textAlign: 'center',
     textShadowColor: 'rgba(0, 0, 0, 0.3)',
     textShadowOffset: { width: 2, height: 2 },
@@ -359,10 +421,10 @@ const styles = StyleSheet.create({
   roomCodeInput: {
     flex: 1,
     backgroundColor: '#F5E6D3',
-    padding: 18,
+    padding: isSmallDevice ? 15 : 18,
     color: '#8B4B9B',
-    fontSize: 18,
-    marginRight: 15,
+    fontSize: getResponsiveFontSize(18),
+    marginRight: isSmallDevice ? 12 : 15,
     borderRadius: 25,
     borderWidth: 3,
     borderColor: '#8B4B9B',
@@ -370,15 +432,15 @@ const styles = StyleSheet.create({
   },
   joinButton: {
     backgroundColor: '#32CD32',
-    paddingHorizontal: 25,
-    paddingVertical: 18,
+    paddingHorizontal: isSmallDevice ? 20 : 25,
+    paddingVertical: isSmallDevice ? 15 : 18,
     borderRadius: 25,
     borderWidth: 3,
     borderColor: '#F5E6D3',
   },
   joinButtonText: {
     color: '#F5E6D3',
-    fontSize: 18,
+    fontSize: getResponsiveFontSize(18),
     fontWeight: 'bold',
   },
   howToPlayContainer: {
@@ -454,4 +516,85 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
   },
+  additionalInfoContainer: {
+    backgroundColor: 'rgba(139, 75, 155, 0.6)',
+    padding: 25,
+    borderRadius: 25,
+    borderWidth: 4,
+    borderColor: '#F5E6D3',
+    marginTop: isSmallDevice ? 20 : 30,
+  },
+  additionalInfoTitle: {
+    color: '#F5E6D3',
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 20,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.3)',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 4,
+  },
+  featuresList: {
+    gap: 15,
+  },
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  featureIcon: {
+    fontSize: 28,
+    marginRight: 15,
+    textShadowColor: 'rgba(0, 0, 0, 0.3)',
+    textShadowOffset: { width: 1, height: 1 },
+    textShadowRadius: 2,
+  },
+  featureText: {
+    color: '#F5E6D3',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  footerContainer: {
+    backgroundColor: 'rgba(139, 75, 155, 0.6)',
+    padding: 25,
+    borderRadius: 25,
+    borderWidth: 4,
+    borderColor: '#F5E6D3',
+    marginTop: isSmallDevice ? 20 : 30,
+    alignItems: 'center',
+  },
+  footerTitle: {
+    color: '#F5E6D3',
+    fontSize: 20,
+    fontWeight: 'bold',
+    marginBottom: 15,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.3)',
+    textShadowOffset: { width: 2, height: 2 },
+    textShadowRadius: 4,
+  },
+  footerText: {
+    color: '#F5E6D3',
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 20,
+    lineHeight: 22,
+  },
+  footerStats: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    width: '100%',
+  },
+  statItem: {
+    alignItems: 'center',
+  },
+  statNumber: {
+    fontSize: 30,
+    marginBottom: 5,
+  },
+  statLabel: {
+    color: '#F5E6D3',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
 }); 
