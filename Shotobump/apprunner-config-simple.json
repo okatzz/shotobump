@@ -1,0 +1,34 @@
+{
+  "ServiceName": "shotobump",
+  "SourceConfiguration": {
+    "AutoDeploymentsEnabled": true,
+    "CodeRepository": {
+      "CodeConfiguration": {
+        "ConfigurationSource": "API",
+        "CodeConfigurationValues": {
+          "Runtime": "NODEJS_18",
+          "BuildCommand": "npm install && npx expo export:web",
+          "StartCommand": "npx serve -s web-build -l 3000",
+          "Port": "3000"
+        }
+      },
+      "SourceCodeVersion": {
+        "Type": "BRANCH",
+        "Value": "main"
+      },
+      "RepositoryUrl": "https://github.com/okatzz/shotobump"
+    }
+  },
+  "InstanceConfiguration": {
+    "Cpu": "1024",
+    "Memory": "2048"
+  },
+  "HealthCheckConfiguration": {
+    "Protocol": "HTTP",
+    "Path": "/",
+    "Interval": 5,
+    "Timeout": 2,
+    "HealthyThreshold": 1,
+    "UnhealthyThreshold": 5
+  }
+} 

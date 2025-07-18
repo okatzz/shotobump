@@ -377,6 +377,9 @@ export class SpotifyService {
 
       const data: SpotifySearchResponse = await response.json();
       
+      // DEBUG: Log the raw API response for diagnosis
+      console.log('🟣 RAW Spotify search response:', JSON.stringify(data, null, 2));
+      
       console.log('✅ Spotify search results:', data.tracks.items.length, 'tracks found');
       
       return data.tracks.items.map(track => ({
@@ -472,6 +475,9 @@ export class SpotifyService {
       }
 
       const data = await response.json();
+      
+      // DEBUG: Log the raw API response for diagnosis
+      console.log('🟣 RAW Spotify top tracks response:', JSON.stringify(data, null, 2));
       
       console.log('✅ User top tracks fetched:', data.items.length, 'tracks');
       
@@ -651,5 +657,94 @@ export class SpotifyService {
     } else {
       return 'shotobump://auth';
     }
+  }
+
+  /**
+   * Play a track on the user's active Spotify device (requires Premium)
+   * @param trackUri - The Spotify track URI (e.g., 'spotify:track:4iz9lGMjU1lXS51oPmUmTe')
+   * @param positionMs - Optional: start position in ms
+   * @param deviceId - Optional: Spotify device ID to target
+   */
+  async playTrackOnActiveDevice(trackUri: string, positionMs: number = 0, deviceId?: string): Promise<void> {
+    if (!this.accessToken) throw new Error('Not authenticated with Spotify');
+    if (!trackUri) throw new Error('No track URI provided');
+
+    let endpoint = 'https://api.spotify.com/v1/me/player/play';
+    if (deviceId) {
+      endpoint += `?device_id=${deviceId}`;
+    }
+    const body = JSON.stringify({ uris: [trackUri], position_ms: positionMs });
+
+    const response = await fetch(endpoint, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body,
+    });
+
+    if (response.status === 404) {
+      throw new Error('No active Spotify device found. Please open the Spotify app and start playing any song, then try again.');
+    }
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to play track: ${response.status} - ${errorText}`);
+    }
+    console.log('✅ Track playback started on active Spotify device.');
+  }
+
+  /**
+   * Fetch the user's available Spotify devices
+   * @returns Array of devices
+   */
+  async getAvailableDevices(): Promise<any[]> {
+    if (!this.accessToken) throw new Error('Not authenticated with Spotify');
+    const endpoint = 'https://api.spotify.com/v1/me/player/devices';
+    const response = await fetch(endpoint, {
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+    if (!response.ok) {
+      if (response.status === 401) {
+        await this.refreshAccessToken();
+        return this.getAvailableDevices();
+      }
+      throw new Error(`Failed to fetch devices: ${response.status}`);
+    }
+    const data = await response.json();
+    return data.devices || [];
+  }
+
+  /**
+   * Pause playback on the user's active Spotify device
+   */
+  async pausePlayback(deviceId?: string): Promise<void> {
+    if (!this.accessToken) throw new Error('Not authenticated with Spotify');
+    
+    let endpoint = 'https://api.spotify.com/v1/me/player/pause';
+    if (deviceId) {
+      endpoint += `?device_id=${deviceId}`;
+    }
+
+    const response = await fetch(endpoint, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (response.status === 404) {
+      console.log('No active Spotify device found to pause.');
+      return;
+    }
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to pause playback: ${response.status} - ${errorText}`);
+    }
+    console.log('✅ Spotify playback paused.');
   }
 } 

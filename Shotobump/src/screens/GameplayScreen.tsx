@@ -18,6 +18,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { useRoom } from '../contexts/RoomContext';
 import { GameSessionService, GameSession, GameTurn, GameGuess, GameSyncState, GamePhase } from '../services/gameSessionService';
 import { SongStackService } from '../services/songStackService';
+import { SpotifyService } from '../services/spotify';
 
 interface GameplayScreenProps {
   navigation: any;
@@ -43,11 +44,13 @@ interface TurnData {
   challenges: string[]; // User IDs who challenged
   votingResults?: any;
   failedAttempts: number;
+  currentGuesser?: string; // Who is currently guessing (defender or challenger)
+  isInChallengerPhase: boolean; // True when challenger is guessing
 }
 
 const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) => {
-  const { user } = useAuth();
-  const { currentRoom, roomMembers } = useRoom();
+  const { user, isPremium } = useAuth();
+  const { currentRoom, roomMembers, selectedSpotifyDeviceId } = useRoom();
   const initialGameSession = route?.params?.gameSession;
 
   if (!initialGameSession) {
@@ -85,6 +88,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
   // Services
   const gameSessionService = GameSessionService.getInstance();
   const songStackService = SongStackService.getInstance();
+  const spotifyService = SpotifyService.getInstance();
 
   // Timers
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -171,6 +175,11 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
         syncToDatabase({
           time_remaining: newTime,
         });
+        
+        // ENHANCED: Check for new guesses on every timer tick during active phases
+        if (gamePhase === 'guessing' || gamePhase === 'audio_playing' || gamePhase === 'turn_results') {
+          checkForNewGuesses();
+        }
       }, 1000);
     } else if (timeRemaining === 0 && isHost) {
       handleTimerComplete();
@@ -183,19 +192,8 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
     };
   }, [timeRemaining, gamePhase, isHost]);
 
-  useEffect(() => {
-    // Host automatically moves to voting when a guess is submitted
-    if (isHost && turnData && turnData.guesses.length > 0 && gamePhase === 'guessing') {
-      console.log('🎯 Host detected guess submission, moving to voting phase');
-      setGamePhase('voting');
-      setShowVotingModal(true);
-      
-      syncToDatabase({
-        phase: 'voting',
-        time_remaining: 30, // 30 seconds for voting
-      });
-    }
-  }, [turnData?.guesses?.length, gamePhase, isHost]);
+  // Removed the useEffect that was causing voting modal to reappear
+  // The sync logic already handles showing/hiding the voting modal properly
 
   const initializeGame = async () => {
     try {
@@ -255,7 +253,61 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
     gameLoopRef.current = setInterval(async () => {
       // Sync game state with other players
       await syncGameState();
+      
+              // ENHANCED: Additional host-specific guess detection
+        if (isHost && (gamePhase === 'guessing' || gamePhase === 'audio_playing' || gamePhase === 'turn_results')) {
+          await checkForNewGuesses();
+        }
     }, 1000); // Sync every second for real-time experience
+  };
+
+  const checkForNewGuesses = async () => {
+    try {
+      const latestSyncState = await gameSessionService.getGameSyncState(gameSession.id);
+      if (latestSyncState?.turn_data) {
+        const serverGuessCount = latestSyncState.turn_data.guesses?.length || 0;
+        const localGuessCount = turnData?.guesses?.length || 0;
+        
+        console.log('🔍 HOST GUESS CHECK:', {
+          serverGuesses: serverGuessCount,
+          localGuesses: localGuessCount,
+          serverPhase: latestSyncState.phase,
+          localPhase: gamePhase,
+          shouldTriggerVoting: serverGuessCount > localGuessCount && serverGuessCount > 0
+        });
+        
+        if (serverGuessCount > localGuessCount && serverGuessCount > 0) {
+          console.log('🚨 HOST DETECTED NEW GUESS! Triggering voting immediately');
+          
+          // Check if this is a challenger guess
+          if (latestSyncState.turn_data.isInChallengerPhase) {
+            console.log('⚔️ CHALLENGER GUESS DETECTED in checkForNewGuesses!');
+          }
+          
+          // Update local turn data
+          const updatedTurnData = {
+            ...turnData!,
+            guesses: latestSyncState.turn_data.guesses,
+            isInChallengerPhase: latestSyncState.turn_data.isInChallengerPhase || false,
+            currentGuesser: latestSyncState.turn_data.currentGuesser || latestSyncState.turn_data.defenderId,
+          };
+          setTurnData(updatedTurnData);
+          
+          // Trigger voting
+          setGamePhase('voting');
+          setTimeRemaining(30);
+          setShowVotingModal(true);
+          
+          // Sync voting phase to database
+          await syncToDatabase({
+            phase: 'voting',
+            time_remaining: 30,
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error checking for new guesses:', error);
+    }
   };
 
   const syncGameState = async () => {
@@ -270,6 +322,8 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
 
       // Check if this is a newer update (avoid loops)
       if (syncState.updated_at === lastSyncTime) {
+        // Still log this for debugging
+        console.log('🔄 Skipping sync - same timestamp:', syncState.updated_at);
         return;
       }
 
@@ -279,18 +333,85 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
         return;
       }
 
-      console.log('🔄 Syncing game state from:', syncState.updated_by, 'Phase:', syncState.phase, 'Time:', syncState.time_remaining);
+      // ENHANCED: Always log sync attempts for debugging
+      console.log('🔄 Sync attempt:', {
+        fromUser: syncState.updated_by,
+        currentUser: user?.id,
+        isHost,
+        serverPhase: syncState.phase,
+        localPhase: gamePhase,
+        serverTime: syncState.time_remaining,
+        localTime: timeRemaining,
+        hasTurnData: !!syncState.turn_data,
+        turnDataGuesses: syncState.turn_data?.guesses?.length || 0,
+        localGuesses: turnData?.guesses?.length || 0
+      });
 
-      // Update local state with synced data
-      if (syncState.phase !== gamePhase) {
+      console.log('🔄 Syncing game state from:', syncState.updated_by, 'Phase:', syncState.phase, 'Time:', syncState.time_remaining);
+      console.log('🎮 Player info:', { userId: user?.id, isHost, displayName: user?.display_name });
+
+      // CRITICAL: Handle phase desync issues - force sync if phases are drastically different
+      if ((syncState.phase === 'voting' || syncState.phase === 'turn_results') && 
+          (gamePhase === 'pre_game_countdown' || gamePhase === 'turn_countdown')) {
+        console.log('🚨 CRITICAL PHASE DESYNC DETECTED! Server:', syncState.phase, 'Local:', gamePhase);
+        console.log('🚨 Force syncing to server phase immediately');
         setGamePhase(syncState.phase);
-        console.log('📱 Phase changed to:', syncState.phase);
+        setTimeRemaining(syncState.time_remaining);
         
-        // Trigger audio for non-host players when audio phase starts
-        if (syncState.phase === 'audio_playing' && !isHost) {
-          console.log('🎵 Non-host detected audio phase, starting audio playback');
+        // If it's voting phase, make sure to show the modal
+        if (syncState.phase === 'voting') {
+          setShowVotingModal(true);
+        }
+        
+        // SPECIAL CASE: If server is in turn_results but there are challenger guesses, force voting
+        if (syncState.phase === 'turn_results' && isHost && 
+            syncState.turn_data?.isInChallengerPhase && 
+            syncState.turn_data?.guesses?.length > 0) {
+          console.log('🚨 CRITICAL: Challenger guess stuck in turn_results! Force voting now');
+          setGamePhase('voting');
+          setTimeRemaining(30);
+          setShowVotingModal(true);
+          
+          // Sync voting phase to database
+          syncToDatabase({
+            phase: 'voting',
+            time_remaining: 30,
+          });
+        }
+      }
+
+      // Store previous phase to detect changes
+      const previousPhase = gamePhase;
+      const previousGuessCount = turnData?.guesses?.length || 0;
+
+      // Update local state with synced data - FORCE UPDATE for non-host players
+      if (syncState.phase !== gamePhase) {
+        console.log('📱 Phase changing from:', gamePhase, 'to:', syncState.phase);
+        console.log('🔧 FORCING phase update for player:', user?.display_name);
+        
+        // Use callback to ensure phase update is applied immediately
+        setGamePhase(prevPhase => {
+          console.log('📱 Phase update callback: from', prevPhase, 'to', syncState.phase);
+          return syncState.phase;
+        });
+        
+        // Trigger audio for non-host players ONLY when phase first changes to audio_playing
+        if (syncState.phase === 'audio_playing' && previousPhase !== 'audio_playing' && !isHost) {
+          console.log('🎵 Non-host detected NEW audio phase, starting audio playback');
           playAudio();
         }
+      }
+      
+      // AGGRESSIVE PHASE SYNC: Force all players to match server phase
+      if (syncState.phase !== gamePhase) {
+        console.log('🚨 AGGRESSIVE PHASE SYNC! Local:', gamePhase, 'Server:', syncState.phase);
+        console.log('🚨 Player:', user?.display_name, 'Host:', isHost);
+        
+        // Use callback to ensure phase update is applied immediately
+        setGamePhase(prevPhase => {
+          console.log('🚨 Aggressive phase update callback: from', prevPhase, 'to', syncState.phase);
+          return syncState.phase;
+        });
       }
 
       // Only sync timer if we're not the host (host controls timing)
@@ -316,8 +437,51 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
         const currentTurnId = turnData ? `${turnData.attackerId}-${turnData.defenderId}` : null;
         const newTurnId = `${syncState.turn_data.attackerId}-${syncState.turn_data.defenderId}`;
         
-        // Update turn data
-        setTurnData(syncState.turn_data);
+        // Check if new guesses were added (for voting trigger)
+        const newGuessCount = syncState.turn_data.guesses?.length || 0;
+        const guessesAdded = newGuessCount > previousGuessCount;
+        
+        console.log('🔍 GUESS CHECK:', {
+          previousGuessCount,
+          newGuessCount,
+          guessesAdded,
+          syncPhase: syncState.phase,
+          localPhase: gamePhase,
+          isHost,
+          hasGuesses: newGuessCount > 0
+        });
+        
+        // Update turn data - ensure backward compatibility with new properties
+        if (syncState.turn_data) {
+          const updatedTurnData: TurnData = {
+            ...syncState.turn_data,
+            currentGuesser: syncState.turn_data.currentGuesser || syncState.turn_data.defenderId,
+            isInChallengerPhase: syncState.turn_data.isInChallengerPhase || false,
+          };
+          
+          console.log('🔄 Updating turn data with', updatedTurnData.guesses.length, 'guesses');
+          console.log('🔄 Is host:', isHost, 'Current phase:', gamePhase);
+          console.log('🔄 Previous guess count:', previousGuessCount, 'New guess count:', newGuessCount);
+          console.log('🔄 Guesses added:', guessesAdded, 'Sync phase:', syncState.phase);
+          
+          setTurnData(updatedTurnData);
+          
+          // Sync voting state if available
+          if (syncState.turn_data.votingResults?.votes) {
+            const serverVotes = syncState.turn_data.votingResults.votes;
+            setVotes(serverVotes);
+            
+            // Check if current user has voted
+            const userHasVoted = serverVotes[user!.id] !== undefined;
+            setHasVoted(userHasVoted);
+            
+            console.log('🗳️ Synced voting state:', {
+              serverVotes,
+              userHasVoted,
+              currentUserVote: serverVotes[user!.id]
+            });
+          }
+        }
         
         // Check if this is a completely new turn (different attacker/defender pair)
         const isNewTurn = currentTurnId !== newTurnId;
@@ -364,50 +528,180 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
           // Never clear text input - let user manage their own input
           console.log('🔒 Preserving user text input state');
         }
+
+        // If new guesses were added and we're not in voting phase yet, trigger voting for all players
+        if (guessesAdded && syncState.phase !== 'voting' && newGuessCount > 0) {
+          console.log('🗳️ NEW GUESS DETECTED! All players should see voting soon');
+          console.log('🎯 Guess count went from', previousGuessCount, 'to', newGuessCount);
+          console.log('🎯 Current sync phase:', syncState.phase, 'Is host:', isHost);
+          console.log('🎯 Local game phase:', gamePhase);
+          
+          // Host should immediately trigger voting when detecting new guesses
+          if (isHost && (syncState.phase === 'guessing' || syncState.phase === 'audio_playing' || syncState.phase === 'turn_results')) {
+            console.log('🚨 HOST TRIGGERING VOTING PHASE NOW!');
+            console.log('🎯 Sync phase:', syncState.phase, 'Host:', isHost);
+            
+            // Check if this is a challenger guess (in turn_results phase)
+            if (syncState.phase === 'turn_results' && syncState.turn_data?.isInChallengerPhase) {
+              console.log('⚔️ CHALLENGER GUESS DETECTED! Triggering voting for challenger answer');
+            }
+            
+            setGamePhase('voting');
+            setTimeRemaining(30);
+            setShowVotingModal(true);
+            
+            // Sync voting phase to database
+            syncToDatabase({
+              phase: 'voting',
+              time_remaining: 30,
+            });
+          } else if (isHost) {
+            console.log('🚫 Host NOT triggering voting - phase check failed');
+            console.log('🚫 Sync phase:', syncState.phase, 'Expected: guessing, audio_playing, or turn_results (for challenger)');
+          } else {
+            console.log('🚫 Non-host detected guess - waiting for host to trigger voting');
+          }
+        }
+        
+        // ADDITIONAL CHECK: If host detects ANY guesses during active phases, trigger voting
+        // This is a backup in case the guess count change detection misses something
+        if (isHost && newGuessCount > 0 && 
+            (syncState.phase === 'audio_playing' || syncState.phase === 'guessing' || syncState.phase === 'turn_results' ||
+             gamePhase === 'audio_playing' || gamePhase === 'guessing' || gamePhase === 'turn_results')) {
+          console.log('🚨 BACKUP GUESS DETECTION! Host found', newGuessCount, 'guesses during', syncState.phase);
+          console.log('🚨 Host info:', { isHost, newGuessCount, syncPhase: syncState.phase, localPhase: gamePhase });
+          console.log('🚨 Triggering voting phase as backup measure');
+          
+          setGamePhase('voting');
+          setTimeRemaining(30);
+          setShowVotingModal(true);
+          
+          // Sync voting phase to database
+          syncToDatabase({
+            phase: 'voting',
+            time_remaining: 30,
+          });
+        }
+        
+        // ULTRA AGGRESSIVE CHECK: Force voting if host sees guesses regardless of phase
+        // But allow turn_results if it's a challenger phase (they need to vote on challenger's guess)
+        if (isHost && newGuessCount > 0 && syncState.phase !== 'voting') {
+          // Allow turn_results phase if it's challenger phase
+          const isValidTurnResults = syncState.phase === 'turn_results' && syncState.turn_data?.isInChallengerPhase;
+          
+          if (syncState.phase !== 'turn_results' || isValidTurnResults) {
+            console.log('🚨🚨 ULTRA AGGRESSIVE HOST CHECK! Forcing voting for', newGuessCount, 'guesses');
+            console.log('🚨🚨 Current phase:', syncState.phase, 'Host status:', isHost);
+            console.log('🚨🚨 Is challenger phase:', syncState.turn_data?.isInChallengerPhase);
+            
+            setGamePhase('voting');
+            setTimeRemaining(30);
+            setShowVotingModal(true);
+            
+            // Sync voting phase to database
+            syncToDatabase({
+              phase: 'voting',
+              time_remaining: 30,
+            });
+          }
+        }
       }
 
       // Show voting modal when phase changes to voting (for all players)
-      if (syncState.phase === 'voting' && gamePhase !== 'voting') {
+      if (syncState.phase === 'voting' && previousPhase !== 'voting') {
         setShowVotingModal(true);
         console.log('🗳️ Voting phase detected, showing modal for all players');
-      }
-
-      // Also ensure voting modal is shown if we're in voting phase but modal isn't visible
-      if (syncState.phase === 'voting' && !showVotingModal) {
-        setShowVotingModal(true);
-        console.log('🗳️ Forcing voting modal visibility for voting phase');
+        
+        // Reset local voting state for new voting phase
+        console.log('🗳️ Resetting voting state for new voting phase');
+        setHasVoted(false);
       }
 
       // Hide voting modal when phase changes away from voting
-      if (syncState.phase !== 'voting' && gamePhase === 'voting') {
+      if (syncState.phase !== 'voting' && previousPhase === 'voting') {
+        console.log('🚫 Voting phase ended, hiding modal');
         setShowVotingModal(false);
         setVotes({});
         setHasVoted(false);
-        console.log('🚫 Voting phase ended, hiding modal');
       }
 
       // Hide turn summary when phase changes away from turn_results
-      if (syncState.phase !== 'turn_results' && gamePhase === 'turn_results') {
+      if (syncState.phase !== 'turn_results' && previousPhase === 'turn_results') {
         setShowTurnSummary(false);
         setTurnResult(null);
         console.log('🚫 Turn results phase ended, hiding summary');
       }
 
-      // Show turn summary when phase changes to turn_results
-      if (syncState.phase === 'turn_results' && gamePhase !== 'turn_results') {
-        console.log('📊 Turn results phase detected, showing summary');
-        // For non-host players, show the turn summary modal
-        if (!isHost && !showTurnSummary) {
-          setShowTurnSummary(true);
-          console.log('📊 Non-host showing turn summary modal');
+      // Show turn summary when phase changes to turn_results (for non-host only, host already has it)
+      if (syncState.phase === 'turn_results' && previousPhase !== 'turn_results' && !isHost) {
+        console.log('📊 Turn results phase detected for non-host, showing summary');
+        console.log('📊 Current sync state turn_data:', syncState.turn_data);
+        
+        // Create turn result data for non-host players based on the current turn data
+        if (syncState.turn_data && playerScores.length > 0) {
+          const currentTurnData = syncState.turn_data;
+          
+          // Determine winner based on voting results or other indicators
+          let winner = 'Unknown';
+          let reason = 'Turn completed';
+          let winnerType: 'attacker' | 'defender' | 'challenger' = 'defender';
+          
+          if (currentTurnData.votingResults?.isCompleted) {
+            // Someone won through voting
+            const lastGuess = currentTurnData.guesses[currentTurnData.guesses.length - 1];
+            if (lastGuess) {
+              const guesser = playerScores.find(p => p.userId === lastGuess.player_id);
+              winner = guesser?.displayName || 'Player';
+              reason = 'Answer accepted by voters';
+              winnerType = currentTurnData.isInChallengerPhase ? 'challenger' : 'defender';
+            }
+          }
+          
+          // Calculate next turn players (simple rotation)
+          const currentAttackerIndex = playerOrder.indexOf(currentTurnData.attackerId);
+          const nextAttackerIndex = (currentAttackerIndex + 1) % playerOrder.length;
+          const nextAttacker = playerOrder[nextAttackerIndex];
+          const nextDefenderIndex = (nextAttackerIndex + 1) % playerOrder.length;
+          const nextDefender = playerOrder[nextDefenderIndex];
+          
+          const nonHostTurnResult = {
+            winner,
+            winnerType,
+            reason,
+            nextAttacker,
+            nextDefender,
+          };
+          
+          console.log('📊 Non-host turn result created:', nonHostTurnResult);
+          setTurnResult(nonHostTurnResult);
         }
+        
+        setShowTurnSummary(true);
+        console.log('📊 Non-host showing turn summary modal');
       }
 
-      // Handle preparing_next_turn phase - hide turn summary for all players
-      if (syncState.phase === 'preparing_next_turn') {
-        console.log('🔄 Preparing next turn - hiding turn summary for all players');
+      // Handle turn_countdown phase - this indicates a new turn is starting
+      if (syncState.phase === 'turn_countdown' && previousPhase !== 'turn_countdown') {
+        console.log('🔄 New turn starting - stopping audio and clearing all state for all players');
+        
+        // Stop any audio playing from the previous turn
+        stopAudio();
+        
+        // Clear all UI state for the new turn
         setShowTurnSummary(false);
         setTurnResult(null);
+        setShowVotingModal(false);
+        setVotes({});
+        setHasVoted(false);
+        setShowAlbumArt(false);
+        
+        // Reset guess state for the new turn
+        setHasSubmittedGuess(false);
+        setHasChallenged(false);
+        setGuessText('');
+        setIsTyping(false);
+        
+        console.log('✅ All players synchronized for new turn');
       }
 
       if (syncState.show_album_art !== undefined) {
@@ -417,6 +711,8 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
       setLastSyncTime(syncState.updated_at);
     } catch (error) {
       console.error('Error syncing game state:', error);
+      // Don't let sync errors break the game loop
+      console.log('🔄 Sync error occurred, but continuing game loop');
     }
   };
 
@@ -443,7 +739,24 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
         startAudioPhase();
         break;
       case 'audio_playing':
-        startGuessingPhase();
+        // Check if guesses were submitted during audio phase before transitioning
+        if (turnData && turnData.guesses.length > 0) {
+          console.log('📝 Guesses submitted during audio phase, going directly to voting');
+          setGamePhase('voting');
+          setTimeRemaining(30);
+          setShowVotingModal(true);
+          stopAudio();
+          
+          // Only host syncs to database
+          if (isHost) {
+            syncToDatabase({
+              phase: 'voting',
+              time_remaining: 30,
+            });
+          }
+        } else {
+          startGuessingPhase();
+        }
         break;
       case 'guessing':
         handleGuessingTimeUp();
@@ -469,14 +782,70 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
     try {
       console.log('🆚 New turn:', attackerId, 'vs', defenderId);
 
+      if (!currentRoom) {
+        throw new Error('No current room available');
+      }
+
       // Increment turn index
       setCurrentTurnIndex(prev => prev + 1);
+      setCurrentAttempt(1); // Reset to attempt 1
 
       // Get attacker's songs
-      const attackerSongs = await songStackService.getUserSongStack(attackerId, currentRoom!.id);
+      const attackerSongs = await songStackService.getUserSongStack(attackerId, currentRoom.id);
       if (attackerSongs.length === 0) {
-        Alert.alert('No Songs', 'Attacker has no songs available!');
-        return;
+        console.log('❌ Attacker has no songs available!');
+        const attackerName = playerScores.find(p => p.userId === attackerId)?.displayName || 'Attacker';
+        
+        // Use Promise-based alert to handle async properly
+        return new Promise<void>((resolve, reject) => {
+          Alert.alert(
+            'No Songs Available', 
+            `${attackerName} has no songs in their stack! The game cannot continue.`,
+            [
+              {
+                text: 'End Game',
+                style: 'destructive',
+                onPress: () => {
+                  navigation.goBack();
+                  reject(new Error('Game ended - no songs available'));
+                }
+              },
+              {
+                text: 'Skip Turn',
+                                    onPress: async () => {
+                      try {
+                        // Check if any players have songs before skipping
+                        let foundPlayerWithSongs = false;
+                        for (const playerId of playerOrder) {
+                          const playerSongs = await songStackService.getUserSongStack(playerId, currentRoom.id);
+                          if (playerSongs.length > 0) {
+                            foundPlayerWithSongs = true;
+                            break;
+                          }
+                        }
+                        
+                        if (!foundPlayerWithSongs) {
+                          Alert.alert('No Songs Available', 'None of the players have songs in their stack! Please add songs before continuing.');
+                          reject(new Error('No players have songs available'));
+                          return;
+                        }
+                        
+                        // Skip to next attacker
+                        const nextAttackerIndex = (playerOrder.indexOf(attackerId) + 1) % playerOrder.length;
+                        const nextAttacker = playerOrder[nextAttackerIndex];
+                        const nextDefenderIndex = (nextAttackerIndex + 1) % playerOrder.length;
+                        const nextDefender = playerOrder[nextDefenderIndex];
+                        console.log('⏭️ Skipping to next attacker:', nextAttacker, 'vs', nextDefender);
+                        await startNewTurn(nextAttacker, nextDefender);
+                        resolve();
+                      } catch (error) {
+                        reject(error);
+                      }
+                    }
+              }
+            ]
+          );
+        });
       }
 
       // Pick first song (FIFO)
@@ -489,7 +858,9 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
         guesses: [],
         challenges: [],
         votingResults: null,
-        failedAttempts: 0, // Reset failed attempts for new turn
+        failedAttempts: 0,
+        currentGuesser: defenderId, // Defender starts
+        isInChallengerPhase: false,
       };
 
       setTurnData(newTurnData);
@@ -498,7 +869,10 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
       setHasSubmittedGuess(false);
       setHasChallenged(false);
       setGuessText('');
-      setShowAlbumArt(false); // Hide album art for new turn
+      setShowAlbumArt(false);
+      setVotes({});
+      setHasVoted(false);
+      setShowVotingModal(false);
 
       // Sync to database
       await syncToDatabase({
@@ -536,6 +910,23 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
 
   const startGuessingPhase = () => {
     console.log('💭 Starting guessing phase...');
+    
+    // Check if there are already guesses submitted during audio phase
+    if (turnData && turnData.guesses.length > 0) {
+      console.log('📝 Guesses already submitted during audio phase, starting voting instead');
+      setGamePhase('voting');
+      setTimeRemaining(30);
+      setShowVotingModal(true);
+      stopAudio();
+      
+      // Sync voting phase to database
+      syncToDatabase({
+        phase: 'voting',
+        time_remaining: 30,
+      });
+      return;
+    }
+    
     setGamePhase('guessing');
     setTimeRemaining(15);
     stopAudio();
@@ -547,7 +938,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
     });
   };
 
-  const handleGuessingTimeUp = () => {
+  const handleGuessingTimeUp = async () => {
     console.log('⏰ Guessing time up!');
     
     // Only host should handle automatic progression
@@ -556,11 +947,49 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
       return;
     }
     
+    // CRITICAL: Get the latest sync state before making any decisions
+    console.log('🔍 Getting latest sync state before timer progression...');
+    try {
+      const latestSyncState = await gameSessionService.getGameSyncState(gameSession.id);
+      if (latestSyncState?.turn_data) {
+        console.log('📡 Latest sync state guesses:', latestSyncState.turn_data.guesses?.length || 0);
+        
+        // Use the latest sync state data for decision making
+        if (latestSyncState.turn_data.guesses && latestSyncState.turn_data.guesses.length > 0) {
+          console.log('🗳️ LATEST SYNC SHOWS GUESSES! Starting voting immediately');
+          setGamePhase('voting');
+          setTimeRemaining(30);
+          setShowVotingModal(true);
+          
+          // Update local turn data with latest sync
+          setTurnData({
+            ...turnData!,
+            guesses: latestSyncState.turn_data.guesses,
+          });
+          
+          // Sync voting phase to database
+          syncToDatabase({
+            phase: 'voting',
+            time_remaining: 30,
+          });
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('Error getting latest sync state:', error);
+    }
+    
+    // ALWAYS check the current turn data from the latest sync state first
+    console.log('🔍 Checking local turn state before timer progression...');
+    console.log('🔍 Current guesses count:', turnData?.guesses?.length || 0);
+    console.log('🔍 Turn data:', turnData);
+    
     // Check if there are any guesses submitted
     if (turnData && turnData.guesses.length > 0) {
       // Someone submitted a guess - start voting phase
-      console.log('📝 Answer found during timeout, starting voting phase');
+      console.log('📝 GUESSES FOUND! Starting voting phase instead of progressing');
       setGamePhase('voting');
+      setTimeRemaining(30);
       setShowVotingModal(true);
       
       // Sync to database
@@ -569,14 +998,15 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
         time_remaining: 30, // 30 seconds for voting
       });
     } else if (turnData) {
-      // No answer submitted - automatically progress based on game state
-      if (turnData.failedAttempts >= 3) {
-        // Challenger failed after defender's 3 attempts - attacker loses
-        console.log('💔 Challenger also failed, attacker loses automatically');
+      // No answer submitted - handle based on current phase
+      console.log('💔 NO GUESSES FOUND - proceeding with failure logic');
+      if (turnData.isInChallengerPhase) {
+        // Challenger failed - attacker loses
+        console.log('💔 Challenger failed, attacker loses');
         handleAttackerLoses();
       } else {
-        // Defender failed to submit answer - move to next attempt automatically
-        console.log('💔 No answer submitted, moving to next attempt automatically');
+        // Defender failed - move to next attempt or challenger phase
+        console.log('💔 Defender failed attempt, handling progression');
         handleDefenderFailed();
       }
     }
@@ -605,6 +1035,15 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
 
   const submitGuess = async () => {
     if (!turnData || !guessText.trim() || hasSubmittedGuess) return;
+    
+    // Allow guess submission during audio_playing or guessing phases
+    if (gamePhase !== 'guessing' && gamePhase !== 'audio_playing') {
+      console.log('🚫 Cannot submit guess during phase:', gamePhase);
+      Alert.alert('Not Ready', 'Please wait for the audio or guessing phase to submit your answer.');
+      return;
+    }
+    
+    console.log('✅ Guess submission allowed during phase:', gamePhase);
 
     try {
       console.log('📝 Submitting guess:', guessText);
@@ -632,6 +1071,13 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
       // Update local state immediately
       setTurnData(updatedTurnData);
 
+      // Always sync the turn data first
+      console.log('💾 Syncing turn data with', updatedGuesses.length, 'guesses to database');
+      await gameSessionService.updateGameSyncState(gameSession.id, {
+        turn_data: updatedTurnData,
+      }, user!.id);
+      console.log('✅ Turn data synced successfully');
+
       // Only host can trigger voting phase
       if (isHost) {
         console.log('🗳️ Host: Guess submitted, starting voting phase for all players');
@@ -639,18 +1085,13 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
         setTimeRemaining(30);
         setShowVotingModal(true);
         
-        // Sync to database for all players - both turn data and voting phase
+        // Sync voting phase to database for all players
         await syncToDatabase({
           phase: 'voting',
           time_remaining: 30,
-          turn_data: updatedTurnData,
         });
       } else {
-        console.log('📝 Non-host: Guess submitted, syncing turn data only');
-        // Non-host just syncs the turn data, host will trigger voting phase
-        await gameSessionService.updateGameSyncState(gameSession.id, {
-          turn_data: updatedTurnData,
-        }, user!.id);
+        console.log('📝 Non-host: Guess submitted, waiting for host to trigger voting');
       }
 
       console.log('✅ Guess submitted and voting phase started for all players');
@@ -700,22 +1141,26 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
     setShowAlbumArt(true); // Reveal album art when someone wins
     console.log('🎨 Album art revealed for attacker win!');
     
+    // Close voting modal if open
+    setShowVotingModal(false);
+    setVotes({});
+    setHasVoted(false);
+    
     // Attacker gets +1 point
     updatePlayerScore(turnData.attackerId, 1);
     
-    // Calculate next turn players
-    const nextDefenderIndex = (playerOrder.indexOf(turnData.defenderId) + 1) % playerOrder.length;
+    // Calculate next turn players - attacker role should always rotate
+    const nextAttackerIndex = (playerOrder.indexOf(turnData.attackerId) + 1) % playerOrder.length;
+    const nextAttacker = playerOrder[nextAttackerIndex];
+    const nextDefenderIndex = (nextAttackerIndex + 1) % playerOrder.length;
     const nextDefender = playerOrder[nextDefenderIndex];
-    const finalNextDefender = nextDefender === turnData.attackerId 
-      ? playerOrder[(nextDefenderIndex + 1) % playerOrder.length]
-      : nextDefender;
     
     const turnResultData = {
       winner: currentAttacker?.displayName || 'Attacker',
       winnerType: 'attacker' as const,
       reason: 'Defender failed to guess correctly',
-      nextAttacker: turnData.attackerId,
-      nextDefender: finalNextDefender,
+      nextAttacker: nextAttacker,
+      nextDefender: nextDefender,
     };
     
     // Show turn summary instead of auto-progressing
@@ -735,6 +1180,11 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
     console.log('🛡️ Answer accepted! Showing results');
     setShowAlbumArt(true); // Reveal album art when someone wins
     console.log('🎨 Album art revealed for defender win!');
+    
+    // Close voting modal immediately
+    setShowVotingModal(false);
+    setVotes({});
+    setHasVoted(false);
     
     // Don't update score here - it's already updated in checkVotingComplete
     
@@ -761,10 +1211,21 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
     setShowTurnSummary(true);
     
     // Sync turn summary state to database for all players
-    syncToDatabase({
-      phase: 'turn_results',
-      show_album_art: true,
-    });
+    if (isHost) {
+      syncToDatabase({
+        phase: 'turn_results',
+        show_album_art: true,
+      });
+    } else {
+      // Non-host attacker can sync turn results directly
+      gameSessionService.updateGameSyncState(gameSession.id, {
+        phase: 'turn_results',
+        show_album_art: true,
+      }, user!.id).catch(error => {
+        console.error('Error syncing turn results:', error);
+      });
+      console.log('✅ Non-host attacker synced turn results to database');
+    }
   };
 
   const handleChallengerWins = (challengerId: string) => {
@@ -773,6 +1234,11 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
     console.log('⚔️ Challenger wins! +1 point');
     setShowAlbumArt(true); // Reveal album art when someone wins
     console.log('🎨 Album art revealed for challenger win!');
+    
+    // Close voting modal immediately
+    setShowVotingModal(false);
+    setVotes({});
+    setHasVoted(false);
     
     // Challenger gets +1 point
     updatePlayerScore(challengerId, 1);
@@ -809,6 +1275,11 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
     
     console.log('💔 Attacker loses! -1 point');
     
+    // Close voting modal if open
+    setShowVotingModal(false);
+    setVotes({});
+    setHasVoted(false);
+    
     // Attacker loses 1 point (can go negative)
     updatePlayerScore(turnData.attackerId, -1);
     
@@ -818,15 +1289,23 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
     const nextDefenderIndex = (nextAttackerIndex + 1) % playerOrder.length;
     const nextDefender = playerOrder[nextDefenderIndex];
     
-    // Show turn summary instead of auto-progressing
-    setTurnResult({
+    const turnResultData = {
       winner: 'No one',
-      winnerType: 'defender', // Just for typing, not really used
+      winnerType: 'defender' as const, // Just for typing, not really used
       reason: 'Attacker failed - no correct guesses',
       nextAttacker: nextAttacker,
       nextDefender: nextDefender,
-    });
+    };
+    
+    // Show turn summary instead of auto-progressing
+    setTurnResult(turnResultData);
     setShowTurnSummary(true);
+    
+    // Sync turn summary state to database for all players
+    syncToDatabase({
+      phase: 'turn_results',
+      show_album_art: true,
+    });
   };
 
   const updatePlayerScore = (userId: string, scoreChange: number) => {
@@ -860,179 +1339,47 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
   };
 
   const playAudio = async () => {
-    try {
-      console.log('🎵 Attempting to play audio...');
-      console.log('Turn data exists:', !!turnData);
-      console.log('Current song exists:', !!turnData?.currentSong);
-      
-      if (turnData?.currentSong) {
-        console.log('🎵 Song details:');
-        console.log('- Song name:', turnData.currentSong.track_data?.name || turnData.currentSong.name);
-        console.log('- Artist:', turnData.currentSong.track_data?.artists?.[0]?.name || turnData.currentSong.artist);
-        console.log('- Track data structure:', Object.keys(turnData.currentSong.track_data || {}));
-        console.log('- Full song object keys:', Object.keys(turnData.currentSong));
-        console.log('- Full song object:', JSON.stringify(turnData.currentSong, null, 2));
-      }
-      
-      if (!turnData?.currentSong) {
-        console.error('❌ No current song in turn data');
-        return;
-      }
-
-      // Try multiple possible locations for preview URL
-      const previewUrl = 
-        turnData.currentSong.track_data?.preview_url || 
-        turnData.currentSong.preview_url ||
-        turnData.currentSong.track?.preview_url ||
-        turnData.currentSong.spotify_track?.preview_url;
-        
-      console.log('🔗 Preview URL from track_data:', turnData.currentSong.track_data?.preview_url);
-      console.log('🔗 Preview URL from root:', turnData.currentSong.preview_url);
-      console.log('🔗 Preview URL from track:', turnData.currentSong.track?.preview_url);
-      console.log('🔗 Preview URL from spotify_track:', turnData.currentSong.spotify_track?.preview_url);
-      console.log('🔗 Final preview URL:', previewUrl);
-      
-      if (!previewUrl) {
-        console.error('❌ No preview URL available for song:', turnData.currentSong.track_data?.name || turnData.currentSong.name);
-        
-        // Try to play a test bell sound instead
-        console.log('🔔 Attempting to play test bell sound as fallback...');
-        try {
-          const testSoundUri = 'https://www.soundjay.com/misc/sounds/bell-ringing-05.wav';
-          console.log('🔔 Creating test sound from:', testSoundUri);
-          
-          const { sound: testSound } = await Audio.Sound.createAsync(
-            { uri: testSoundUri },
-            { shouldPlay: true, volume: 0.5 }
-          );
-          
-          setSound(testSound);
-          setIsPlaying(true);
-          console.log('✅ Test sound playing successfully');
-          
-          // Auto-stop after 3 seconds
-          setTimeout(async () => {
-            try {
-              await testSound.stopAsync();
-              await testSound.unloadAsync();
-              setSound(null);
-              setIsPlaying(false);
-              console.log('🔔 Test sound stopped');
-            } catch (e) {
-              console.error('Error stopping test sound:', e);
-            }
-          }, 3000);
-          
-          return;
-        } catch (testError) {
-          console.error('❌ Test sound also failed:', testError);
-        }
-        
-        // Show user-friendly message
-        console.log('🎵 No audio available - continuing without sound');
-        Alert.alert(
-          'Audio Unavailable', 
-          'This song does not have a preview available. The game will continue without audio.',
-          [{ text: 'OK' }]
-        );
-        
-        // Skip audio and go directly to guessing phase
-        if (isHost) {
-          console.log('⏭️ Skipping audio phase due to no preview');
-          setTimeout(() => {
-            startGuessingPhase();
-          }, 1000);
-        }
-        return;
-      }
-
-      // Stop any existing audio first
-      if (sound) {
-        console.log('🛑 Stopping existing audio...');
-        await stopAudio();
-      }
-
-      console.log('🎵 Creating audio from URL:', previewUrl);
-      console.log('🎵 Playing song:', turnData.currentSong.track_data?.name || turnData.currentSong.name);
-
-      // Try to set up audio mode for better compatibility
+    if (isHost && isPremium && turnData?.currentSong?.track_data?.id) {
       try {
-        console.log('🔧 Setting audio mode...');
-        await Audio.setAudioModeAsync({
-          allowsRecordingIOS: false,
-          playsInSilentModeIOS: true,
-          staysActiveInBackground: false,
-          shouldDuckAndroid: true,
-          playThroughEarpieceAndroid: false,
-        });
-        console.log('✅ Audio mode set successfully');
-      } catch (audioModeError) {
-        console.warn('⚠️ Could not set audio mode (normal for web):', audioModeError);
+        const trackUri = `spotify:track:${turnData.currentSong.track_data.id}`;
+        await spotifyService.playTrackOnActiveDevice(trackUri, 0, selectedSpotifyDeviceId || undefined);
+        Alert.alert('Playing on Spotify', 'The full song is now playing on your Spotify app!');
+      } catch (error) {
+        Alert.alert('Spotify Playback Error', error instanceof Error ? error.message : String(error));
       }
-
-      console.log('🎵 Creating sound object...');
-      const { sound: newSound } = await Audio.Sound.createAsync(
-        { uri: previewUrl },
-        { shouldPlay: true, volume: 1.0 }
-      );
-      console.log('✅ Sound object created successfully');
-      
-      setSound(newSound);
-      setIsPlaying(true);
-
-      // Set up progress tracking
-      newSound.setOnPlaybackStatusUpdate((status: any) => {
-        if (status.isLoaded) {
-          const progress = status.positionMillis / (status.durationMillis || 30000); // Default 30s if no duration
-          setAudioProgress(progress || 0);
-          
-          // Log playback status periodically
-          if (Math.floor(status.positionMillis / 1000) % 5 === 0) {
-            console.log(`🎵 Audio progress: ${Math.floor(status.positionMillis / 1000)}s`);
-          }
-        }
-        
-        if (status.didJustFinish) {
-          console.log('🎵 Audio finished playing');
-          setIsPlaying(false);
-          setAudioProgress(0);
-        }
-      });
-
-      console.log('✅ Audio started successfully');
-
-    } catch (error) {
-      console.error('❌ Error playing audio:', error);
-      console.error('❌ Error details:', {
-        message: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : 'No stack trace'
-      });
-      
-      Alert.alert(
-        'Audio Error', 
-        `Failed to play audio: ${error instanceof Error ? error.message : String(error)}. The game will continue.`,
-        [{ text: 'OK' }]
-      );
-      setIsPlaying(false);
-      
-      // Continue with game flow even if audio fails
-      if (isHost && gamePhase === 'audio_playing') {
-        console.log('⏭️ Audio failed, moving to guessing phase');
-        setTimeout(() => {
-          startGuessingPhase();
-        }, 2000);
-      }
+      return;
     }
+    if (!isHost) {
+      Alert.alert('Waiting for Host', 'The host is playing the song on their Spotify device.');
+      return;
+    }
+    if (!isPremium) {
+      Alert.alert('Spotify Premium Required', 'You must be a Spotify Premium user to play full songs.');
+      return;
+    }
+    // fallback: show error
+    Alert.alert('Playback Error', 'Unable to play the song.');
   };
 
   const stopAudio = async () => {
     try {
+      // Stop old preview audio if it exists
       if (sound) {
         await sound.stopAsync();
         await sound.unloadAsync();
         setSound(null);
         setIsPlaying(false);
         setAudioProgress(0);
+      }
+      
+      // Stop Spotify playback if host and premium
+      if (isHost && isPremium) {
+        try {
+          await spotifyService.pausePlayback(selectedSpotifyDeviceId || undefined);
+          console.log('🎵 Spotify playback stopped');
+        } catch (error) {
+          console.log('⚠️ Could not stop Spotify playback:', error);
+        }
       }
     } catch (error) {
       console.error('Error stopping audio:', error);
@@ -1068,18 +1415,31 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
       
       <View style={styles.gameInfo}>
         <Text style={styles.gameTitle}>Shotobump</Text>
-        <Text style={styles.gamePhaseText}>
-          {gamePhase === 'turn_countdown' && 'Turn Starting...'}
-          {gamePhase === 'audio_playing' && '🎵 Listen Carefully'}
-          {gamePhase === 'guessing' && '💭 Time to Guess'}
-          {gamePhase === 'voting' && '🗳️ Voting Time'}
-        </Text>
-        {/* Audio info message */}
-        {gamePhase === 'audio_playing' && !isPlaying && (
-          <Text style={styles.audioInfoText}>
-            💡 No audio? Choose songs with 🎵 in Song Stack
-          </Text>
-        )}
+        <View style={styles.phaseIndicator}>
+          {gamePhase === 'turn_countdown' && (
+            <View style={[styles.phaseContainer, { backgroundColor: '#FFA500' }]}>
+              <Text style={styles.phaseText}>⏳ Turn Starting...</Text>
+            </View>
+          )}
+          {gamePhase === 'audio_playing' && (
+            <View style={[styles.phaseContainer, { backgroundColor: '#1DB954' }]}>
+              <Text style={styles.phaseText}>🎵 LISTENING PHASE</Text>
+              <Text style={styles.phaseSubtext}>Listen carefully to the song!</Text>
+            </View>
+          )}
+          {gamePhase === 'guessing' && (
+            <View style={[styles.phaseContainer, { backgroundColor: '#FF6B47' }]}>
+              <Text style={styles.phaseText}>💭 GUESSING PHASE</Text>
+              <Text style={styles.phaseSubtext}>Defender: Make your guess!</Text>
+            </View>
+          )}
+          {gamePhase === 'voting' && (
+            <View style={[styles.phaseContainer, { backgroundColor: '#8B4B9B' }]}>
+              <Text style={styles.phaseText}>🗳️ VOTING PHASE</Text>
+              <Text style={styles.phaseSubtext}>Vote on the answer!</Text>
+            </View>
+          )}
+        </View>
       </View>
 
       <View style={{ flexDirection: 'row' }}>
@@ -1093,6 +1453,16 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
         >
           <Text style={styles.endTurnButtonText}>🎵</Text>
         </TouchableOpacity>
+        
+        {/* Skip Turn Button - Host only */}
+        {isHost && turnData && gamePhase !== 'pre_game_countdown' && (
+          <TouchableOpacity 
+            style={[styles.endTurnButton, { marginRight: 8 }]}
+            onPress={skipToNextTurn}
+          >
+            <Text style={styles.endTurnButtonText}>⏭️</Text>
+          </TouchableOpacity>
+        )}
         
         {isHost && turnData && gamePhase !== 'pre_game_countdown' ? (
           <TouchableOpacity 
@@ -1190,26 +1560,63 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
   const renderGuessingSection = () => {
     if (!turnData || gamePhase === 'pre_game_countdown' || gamePhase === 'turn_countdown') return null;
 
-    const isDefender = user?.id === turnData.defenderId;
-    const isAttacker = user?.id === turnData.attackerId;
-    const canSubmitGuess = isDefender && !hasSubmittedGuess;
-    const canChallenge = !isDefender && !isAttacker && !hasChallenged;
+    const currentGuesser = turnData.currentGuesser;
+    const isCurrentGuesser = user?.id === currentGuesser;
+    const canSubmitGuess = isCurrentGuesser && !hasSubmittedGuess && (gamePhase === 'guessing' || gamePhase === 'audio_playing');
+    const canChallenge = !turnData.isInChallengerPhase && !isCurrentAttacker && !isCurrentGuesser && !hasChallenged && turnData.failedAttempts < 3;
 
-    if (isAttacker) {
+    if (isCurrentAttacker) {
       return (
         <View style={styles.guessingContainer}>
           <View style={styles.spectatorSection}>
             <Text style={styles.sectionTitle}>You're the Attacker</Text>
-            <Text>Wait for the defender to guess your song!</Text>
+            <Text style={styles.spectatorText}>
+              Wait for the {turnData.isInChallengerPhase ? 'challenger' : 'defender'} to guess your song!
+            </Text>
+          </View>
+        </View>
+      );
+    }
+
+    if (isCurrentGuesser) {
+      return (
+        <View style={styles.guessingContainer}>
+          <View style={styles.defenderSection}>
+            <Text style={styles.sectionTitle}>
+              {turnData.isInChallengerPhase ? "You're the Challenger!" : "You're the Defender!"}
+            </Text>
+            <Text style={styles.defenderInstructions}>
+              {turnData.isInChallengerPhase 
+                ? "This is your only chance to guess the song!"
+                : `Attempt ${turnData.failedAttempts + 1}/3 - What song is this?`
+              }
+            </Text>
             
-            {turnData.challenges.length > 0 && (
-              <View style={styles.challengersSection}>
-                <Text style={styles.sectionTitle}>Challengers:</Text>
-                {turnData.challenges.map((challengerId, index) => (
-                  <Text key={challengerId} style={styles.challengerItem}>
-                    ⚔️ {playerScores.find(p => p.userId === challengerId)?.displayName}
-                  </Text>
-                ))}
+            {canSubmitGuess && (
+              <View style={styles.guessInputContainer}>
+                <TextInput
+                  style={styles.guessInput}
+                  placeholder="Enter your guess..."
+                  placeholderTextColor="#999"
+                  value={guessText}
+                  onChangeText={setGuessText}
+                  multiline={false}
+                  maxLength={100}
+                />
+                <TouchableOpacity
+                  style={[styles.submitButton, !guessText.trim() && styles.submitButtonDisabled]}
+                  onPress={submitGuess}
+                  disabled={!guessText.trim()}
+                >
+                  <Text style={styles.submitButtonText}>Submit Guess</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+            
+            {hasSubmittedGuess && (
+              <View style={styles.submittedContainer}>
+                <Text style={styles.submittedText}>✅ Guess submitted: "{guessText}"</Text>
+                <Text style={styles.submittedSubtext}>Waiting for voting...</Text>
               </View>
             )}
           </View>
@@ -1217,88 +1624,95 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
       );
     }
 
+    // Other players (spectators who can challenge)
     return (
       <View style={styles.guessingContainer}>
-        {/* Defender Section */}
-        {isDefender && (
-          <View style={styles.defenderSection}>
-            <Text style={styles.sectionTitle}>Your Turn to Guess!</Text>
-            
-            <TextInput
-              style={styles.guessInput}
-              placeholder="Enter your guess..."
-              value={guessText}
-              onChangeText={(text) => {
-                setGuessText(text);
-                localStateRef.current.guessText = text;
-                localStateRef.current.isTyping = text.length > 0;
-              }}
-              onFocus={() => {
-                setIsTyping(true);
-                localStateRef.current.isTyping = true;
-              }}
-              onBlur={() => {
-                setIsTyping(false);
-                localStateRef.current.isTyping = guessText.length > 0;
-              }}
-              editable={!hasSubmittedGuess}
-              multiline={false}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            
+        <View style={styles.spectatorSection}>
+          <Text style={styles.sectionTitle}>Spectator</Text>
+          <Text style={styles.spectatorText}>
+            {turnData.isInChallengerPhase
+              ? `${playerScores.find(p => p.userId === currentGuesser)?.displayName} is challenging!`
+              : `${playerScores.find(p => p.userId === currentGuesser)?.displayName} is guessing (attempt ${turnData.failedAttempts + 1}/3)`
+            }
+          </Text>
+          
+          {canChallenge && (
             <TouchableOpacity
-              style={[styles.submitButton, (!canSubmitGuess || !guessText.trim()) && styles.disabledButton]}
-              onPress={submitGuess}
-              disabled={!canSubmitGuess || !guessText.trim()}
+              style={[styles.challengeButton, hasChallenged && styles.challengeButtonDisabled]}
+              onPress={submitChallenge}
+              disabled={hasChallenged}
             >
-              <Text style={styles.submitButtonText}>
-                {hasSubmittedGuess ? 'Guess Submitted!' : 'Submit Guess'}
+              <Text style={styles.challengeButtonText}>
+                {hasChallenged ? '⚔️ Challenge Submitted' : '⚔️ Challenge'}
               </Text>
             </TouchableOpacity>
-          </View>
-        )}
+          )}
+        </View>
+      </View>
+    );
+  };
 
-        {/* Spectator/Challenger Section */}
-        {!isDefender && (
-          <View style={styles.spectatorSection}>
-            <Text style={styles.sectionTitle}>
-              {gamePhase === 'audio_playing' ? 'Listen to the Song' : 'Guessing Phase'}
-            </Text>
-            <Text>
-              {gamePhase === 'audio_playing' 
-                ? 'The song is playing. You can challenge now!' 
-                : `${currentDefender?.displayName} is guessing...`}
-            </Text>
-            
-            {canChallenge && (
-              <TouchableOpacity
-                style={styles.challengeButton}
-                onPress={submitChallenge}
-              >
-                <Text style={styles.challengeButtonText}>⚔️ Challenge</Text>
-              </TouchableOpacity>
-            )}
-            
-            {hasChallenged && (
-              <Text style={styles.challengedText}>✅ You've challenged this turn!</Text>
-            )}
-          </View>
-        )}
+  const renderTurnStateComponent = () => {
+    if (!turnData || gamePhase === 'pre_game_countdown') return null;
 
-        {/* Show current guesses */}
+    const currentAttemptNumber = turnData.isInChallengerPhase ? 4 : (turnData.failedAttempts + 1);
+    const maxAttempts = turnData.isInChallengerPhase ? 4 : 3;
+    const currentGuesser = playerScores.find(p => p.userId === turnData.currentGuesser);
+    const guesserRole = turnData.isInChallengerPhase ? 'Challenger' : 'Defender';
+
+    return (
+      <View style={styles.turnStateContainer}>
+        <View style={styles.turnStateHeader}>
+          <Text style={styles.turnStateTitle}>
+            Turn {currentTurnIndex} • Attempt {currentAttemptNumber}/{maxAttempts}
+          </Text>
+          <Text style={styles.turnStatePlayer}>
+            {guesserRole}: {currentGuesser?.displayName}
+          </Text>
+          {turnData.isInChallengerPhase && (
+            <Text style={styles.challengerPhaseText}>⚔️ Challenger Phase</Text>
+          )}
+        </View>
+
+        {/* Current Guesses */}
         {turnData.guesses.length > 0 && (
-          <View style={styles.guessesContainer}>
-            <Text style={styles.guessesTitle}>Submitted Guesses:</Text>
+          <View style={styles.guessesStateSection}>
+            <Text style={styles.stateSubtitle}>Current Guesses:</Text>
             {turnData.guesses.map((guess, index) => {
               const guesser = playerScores.find(p => p.userId === guess.player_id);
               return (
-                <View key={index} style={styles.guessItem}>
-                  <Text style={styles.guessText}>"{guess.guess_text}"</Text>
-                  <Text style={styles.guesser}>- {guesser?.displayName}</Text>
+                <View key={index} style={styles.guessStateItem}>
+                  <Text style={styles.guessStateText}>
+                    "{guess.guess_text}" - {guesser?.displayName}
+                  </Text>
+                  {user?.id === turnData.attackerId && (
+                    <TouchableOpacity
+                      style={styles.acceptGuessButton}
+                      onPress={() => acceptGuessFromTurnState(guess.id)}
+                    >
+                      <Text style={styles.acceptGuessText}>✓ Accept</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               );
             })}
+          </View>
+        )}
+
+        {/* Challengers (only show if not in challenger phase) */}
+        {!turnData.isInChallengerPhase && turnData.challenges.length > 0 && (
+          <View style={styles.challengersStateSection}>
+            <Text style={styles.stateSubtitle}>Challengers Waiting:</Text>
+            <View style={styles.challengersList}>
+              {turnData.challenges.map((challengerId, index) => {
+                const challenger = playerScores.find(p => p.userId === challengerId);
+                return (
+                  <Text key={index} style={styles.challengerStateText}>
+                    ⚔️ {challenger?.displayName}
+                  </Text>
+                );
+              })}
+            </View>
           </View>
         )}
       </View>
@@ -1334,22 +1748,32 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
             {canVote ? (
               <View style={styles.votingButtons}>
                 <TouchableOpacity
-                  style={[styles.voteButton, styles.acceptButton]}
+                  style={[
+                    styles.voteButton, 
+                    styles.acceptButton,
+                    hasVoted && votes[user!.id] === 'accept' ? { opacity: 0.8 } : null
+                  ]}
                   onPress={() => submitVote('accept')}
-                  disabled={hasVoted}
+                  disabled={false}
                 >
                   <Text style={styles.voteButtonText}>
                     ✓ Accept ({Object.values(votes).filter(v => v === 'accept').length})
+                    {hasVoted && votes[user!.id] === 'accept' ? ' ✓' : ''}
                   </Text>
                 </TouchableOpacity>
                 
                 <TouchableOpacity
-                  style={[styles.voteButton, styles.rejectButton]}
+                  style={[
+                    styles.voteButton, 
+                    styles.rejectButton,
+                    hasVoted && votes[user!.id] === 'reject' ? { opacity: 0.8 } : null
+                  ]}
                   onPress={() => submitVote('reject')}
-                  disabled={hasVoted}
+                  disabled={false}
                 >
                   <Text style={styles.voteButtonText}>
                     ✗ Reject ({Object.values(votes).filter(v => v === 'reject').length})
+                    {hasVoted && votes[user!.id] === 'reject' ? ' ✓' : ''}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1370,6 +1794,16 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
                  playerScores.length === 2 ? 'Attacker decides!' : 
                  'Need attacker OR 2+ players to accept'}
               </Text>
+              
+              {/* Host Skip Button in Voting Modal */}
+              {isHost && (
+                <TouchableOpacity
+                  style={[styles.voteButton, { backgroundColor: '#FF6B6B', marginTop: 10 }]}
+                  onPress={skipToNextTurn}
+                >
+                  <Text style={styles.voteButtonText}>⏭️ Skip Turn (Host)</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         </View>
@@ -1378,7 +1812,32 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
   };
 
   const submitVote = async (vote: string) => {
-    if (!turnData || hasVoted) return;
+    if (!turnData) {
+      console.log('🚫 Vote submission blocked: No turn data');
+      return;
+    }
+    
+    // Allow changing vote if user clicks a different option
+    if (hasVoted && votes[user!.id] === vote) {
+      console.log('🚫 Vote submission blocked: Already voted for this option');
+      return;
+    }
+    
+    console.log('🗳️ Vote submission (change allowed):', {
+      vote,
+      userId: user?.id,
+      hasVoted,
+      previousVote: votes[user!.id],
+      isChangingVote: hasVoted && votes[user!.id] !== vote
+    });
+
+    console.log('🗳️ Vote submission attempt:', {
+      vote,
+      userId: user?.id,
+      hasVoted,
+      turnDataExists: !!turnData,
+      currentVotes: votes
+    });
 
     try {
       setHasVoted(true);
@@ -1401,11 +1860,27 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
 
       setTurnData(updatedTurnData);
       
-      await syncToDatabase({
-        turn_data: updatedTurnData,
+      console.log('🗳️ Syncing vote to database:', {
+        vote,
+        userId: user?.id,
+        newVotes,
+        isHost
       });
+      
+      // Allow all players to sync their votes directly
+      if (isHost) {
+        await syncToDatabase({
+          turn_data: updatedTurnData,
+        });
+      } else {
+        // Non-host players can sync their votes directly
+        await gameSessionService.updateGameSyncState(gameSession.id, {
+          turn_data: updatedTurnData,
+        }, user!.id);
+        console.log('✅ Non-host player synced vote to database');
+      }
 
-      console.log('🗳️ Vote submitted:', vote);
+      console.log('🗳️ Vote submitted and synced:', vote);
       
       // Check if voting is complete
       checkVotingComplete(newVotes);
@@ -1413,6 +1888,12 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
     } catch (error) {
       console.error('Error submitting vote:', error);
       Alert.alert('Error', 'Failed to submit vote.');
+      // Reset vote state on error
+      setHasVoted(false);
+      setVotes(prevVotes => {
+        const { [user!.id]: _, ...rest } = prevVotes;
+        return rest;
+      });
     }
   };
 
@@ -1432,6 +1913,19 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
 
     console.log('🗳️ Vote count:', { acceptVotes, rejectVotes, totalVotes: votesCount, totalPlayers });
 
+    // ENHANCED LOGGING: Show detailed voting state
+    console.log('🗳️ Detailed voting state:', {
+      currentVotes,
+      attackerId: turnData.attackerId,
+      guesserId: guess.player_id,
+      currentUserId: user?.id,
+      eligibleVoters: playerScores.length - 1,
+      votesCount,
+      attackerVote: currentVotes[turnData.attackerId],
+      isCurrentUserAttacker: user?.id === turnData.attackerId,
+      isCurrentUserGuesser: user?.id === guess.player_id
+    });
+
     // Check if attacker accepted (auto-win)
     const attackerVote = currentVotes[turnData.attackerId];
     const attackerAccepted = attackerVote === 'accept';
@@ -1443,12 +1937,29 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
       .map(([, vote]) => vote);
     
     const nonGuesserAccepts = nonGuesserVotes.filter(vote => vote === 'accept').length;
+    
+    console.log('🗳️ Voting logic check:', {
+      attackerAccepted,
+      nonGuesserAccepts,
+      eligibleVoters,
+      totalPlayers,
+      votesCount,
+      shouldCompleteVoting: attackerAccepted || (totalPlayers === 2 && votesCount >= eligibleVoters) || nonGuesserAccepts >= 2 || votesCount >= eligibleVoters
+    });
 
     if (attackerAccepted) {
       console.log('🏆 Attacker accepted the answer!');
       // Award point to the guesser
       updatePlayerScore(guess.player_id, 1);
-      handleDefenderWins();
+      
+      // Check if this is a challenger win
+      if (turnData.isInChallengerPhase) {
+        console.log('⚔️ Challenger answer accepted!');
+        handleChallengerWins(guess.player_id);
+      } else {
+        console.log('🛡️ Defender answer accepted!');
+        handleDefenderWins();
+      }
     } else if (totalPlayers === 2) {
       // Special case for 2-player games: attacker's vote is final
       if (votesCount >= eligibleVoters) { // Attacker has voted
@@ -1462,10 +1973,25 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
       console.log('🏆 2+ players accepted the answer!');
       // Award point to the guesser
       updatePlayerScore(guess.player_id, 1);
-      handleDefenderWins();
+      
+      // Check if this is a challenger win
+      if (turnData.isInChallengerPhase) {
+        console.log('⚔️ Challenger answer accepted by majority!');
+        handleChallengerWins(guess.player_id);
+      } else {
+        console.log('🛡️ Defender answer accepted by majority!');
+        handleDefenderWins();
+      }
     } else if (votesCount >= eligibleVoters) { // All eligible voters have voted
       console.log('💔 Answer rejected by majority');
       handleAnswerRejected();
+    } else {
+      console.log('🔄 Voting not complete yet, waiting for more votes:', {
+        votesCount,
+        eligibleVoters,
+        nonGuesserAccepts,
+        needsMoreVotes: eligibleVoters - votesCount
+      });
     }
   };
 
@@ -1488,34 +2014,53 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
   const handleDefenderFailed = () => {
     if (!turnData) return;
 
+    // CRITICAL CHECK: If there are guesses submitted, start voting instead of failing
+    if (turnData.guesses.length > 0) {
+      console.log('🗳️ DEFENDER FAILED BUT GUESSES EXIST! Starting voting instead of progressing');
+      setGamePhase('voting');
+      setTimeRemaining(30);
+      setShowVotingModal(true);
+      
+      // Sync voting phase to database
+      syncToDatabase({
+        phase: 'voting',
+        time_remaining: 30,
+      });
+      return;
+    }
+
     const newFailedAttempts = turnData.failedAttempts + 1;
-    console.log(`💔 Attempt ${newFailedAttempts}/3 failed`);
+    const newAttempt = newFailedAttempts + 1;
+    
+    console.log(`💔 Defender attempt ${newFailedAttempts}/3 failed - NO GUESSES FOUND`);
     
     if (newFailedAttempts >= 3) {
-      // After 3 defender attempts, challenger gets 1 try
+      // After 3 defender attempts, check for challengers
       if (turnData.challenges.length > 0) {
         const firstChallenger = turnData.challenges[0];
-        console.log('⚔️ Switching to challenger after 3 defender attempts');
+        console.log('⚔️ Switching to challenger phase after 3 defender attempts');
+        
+        setCurrentAttempt(4); // Challenger gets attempt 4
         
         const updatedTurnData = {
           ...turnData,
-          defenderId: firstChallenger,
-          failedAttempts: 3, // Keep track that defender already used 3 attempts
+          failedAttempts: 3,
+          currentGuesser: firstChallenger,
+          isInChallengerPhase: true,
           guesses: [], // Reset guesses for challenger
-          votingResults: null, // Reset voting results
+          votingResults: null,
         };
         
         setTurnData(updatedTurnData);
         
         // Reset local state for challenger
         setHasSubmittedGuess(false);
-        setHasChallenged(false);
         setGuessText('');
         setVotes({});
         setHasVoted(false);
         setShowVotingModal(false);
         
-        // Play audio again for challenger
+        // Start new attempt for challenger
         setGamePhase('turn_countdown');
         setTimeRemaining(3);
         
@@ -1523,7 +2068,6 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
         syncToDatabase({
           phase: 'turn_countdown',
           time_remaining: 3,
-          current_defender_id: firstChallenger,
           turn_data: updatedTurnData,
         });
       } else {
@@ -1533,13 +2077,17 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
       }
     } else {
       // Give defender another chance (attempts 2 and 3)
-      console.log(`🔄 Giving defender another chance (attempt ${newFailedAttempts + 1}/3)`);
+      console.log(`🔄 Giving defender another chance (attempt ${newAttempt}/3)`);
+      
+      setCurrentAttempt(newAttempt);
       
       const updatedTurnData = {
         ...turnData,
         failedAttempts: newFailedAttempts,
+        currentGuesser: turnData.defenderId, // Still defender
+        isInChallengerPhase: false,
         guesses: [], // Reset guesses for next attempt
-        votingResults: null, // Reset voting results
+        votingResults: null,
       };
       
       setTurnData(updatedTurnData);
@@ -1551,7 +2099,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
       setHasVoted(false);
       setShowVotingModal(false);
       
-      // Play audio again for defender
+      // Start new attempt
       setGamePhase('turn_countdown');
       setTimeRemaining(3);
       
@@ -1564,27 +2112,216 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
     }
   };
 
-  const proceedToNextTurn = () => {
-    if (!turnResult) return;
-    
-    console.log('▶️ Host proceeding to next turn');
-    
-    // Hide turn summary locally
-    setShowTurnSummary(false);
-    setTurnResult(null);
-    
-    // Sync that turn summary is being closed for all players
-    // This ensures all players exit the turn summary modal
-    syncToDatabase({
-      phase: 'preparing_next_turn',
-      show_turn_summary: false,
-      turn_result: null,
+  const proceedToNextTurn = async () => {
+    console.log('🔘 NEXT TURN BUTTON PRESSED!');
+    console.log('🔘 Current state:', { 
+      isHost, 
+      showTurnSummary, 
+      turnResult: !!turnResult,
+      userId: user?.id,
+      displayName: user?.display_name,
+      gamePhase,
+      currentTurnIndex,
+      playerOrder: playerOrder.length
     });
     
-    // Small delay to ensure database sync, then start the next turn
-    setTimeout(() => {
-      startNewTurn(turnResult.nextAttacker, turnResult.nextDefender);
-    }, 500);
+    if (!isHost) {
+      console.log('❌ Only host can proceed to next turn');
+      Alert.alert('Error', 'Only the host can start the next turn.');
+      return;
+    }
+    
+    if (!turnResult) {
+      console.log('❌ No turn result available for next turn');
+      console.log('❌ turnResult is:', turnResult);
+      Alert.alert('Error', 'No turn result available. Please try again.');
+      return;
+    }
+    
+    console.log('▶️ Host proceeding to next turn');
+    console.log('🎯 Next turn will be:', turnResult.nextAttacker, 'vs', turnResult.nextDefender);
+    console.log('🎯 Turn result details:', turnResult);
+    
+    // Store the next turn info before clearing state
+    const nextAttacker = turnResult.nextAttacker;
+    const nextDefender = turnResult.nextDefender;
+    
+    if (!nextAttacker || !nextDefender) {
+      console.log('❌ Invalid next turn players:', { nextAttacker, nextDefender });
+      Alert.alert('Error', 'Invalid next turn players. Please try again.');
+      return;
+    }
+    
+    // Validate that players exist in playerOrder
+    if (!playerOrder.includes(nextAttacker) || !playerOrder.includes(nextDefender)) {
+      console.log('❌ Next turn players not in player order:', { nextAttacker, nextDefender, playerOrder });
+      Alert.alert('Error', 'Next turn players are not valid. Please restart the game.');
+      return;
+    }
+    
+    // Proactively check if next attacker has songs
+    if (!currentRoom) {
+      console.error('❌ No current room available');
+      Alert.alert('Error', 'Room not available. Please try again.');
+      return;
+    }
+    
+    try {
+      const nextAttackerSongs = await songStackService.getUserSongStack(nextAttacker, currentRoom.id);
+      if (nextAttackerSongs.length === 0) {
+        const nextAttackerName = playerScores.find(p => p.userId === nextAttacker)?.displayName || 'Player';
+        console.log('⚠️ Next attacker has no songs, showing warning');
+        Alert.alert(
+          'No Songs Available', 
+          `${nextAttackerName} has no songs in their stack! They need to add songs before continuing.`,
+          [
+            { text: 'OK', style: 'default' }
+          ]
+        );
+        return;
+      }
+    } catch (error) {
+      console.error('Error checking next attacker songs:', error);
+      Alert.alert('Error', 'Failed to check player songs. Please try again.');
+      return;
+    }
+    
+    try {
+      // Stop any audio that might be playing from the previous turn
+      console.log('🔇 Stopping audio before next turn');
+      await stopAudio();
+      
+      // Hide turn summary locally first
+      console.log('🔄 Hiding turn summary modal');
+      setShowTurnSummary(false);
+      setTurnResult(null);
+      
+      // Clear voting modal state for all players
+      setShowVotingModal(false);
+      setVotes({});
+      setHasVoted(false);
+      
+      // Add a small delay to ensure state is cleared
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Start the next turn
+      console.log('🚀 Starting new turn with:', nextAttacker, 'vs', nextDefender);
+      try {
+        await startNewTurn(nextAttacker, nextDefender);
+        console.log('✅ Next turn started successfully');
+      } catch (turnError) {
+        console.error('❌ Error starting new turn:', turnError);
+        
+        // Check if this is a "no songs" error or user cancelled
+        const errorMessage = turnError instanceof Error ? turnError.message : String(turnError);
+        if (errorMessage?.includes('Game ended') || errorMessage?.includes('no songs')) {
+          console.log('🎮 Game ended or player has no songs - stopping here');
+          return; // Don't show error alert, user already handled it
+        }
+        
+        // For other errors, show alert and restore state
+        Alert.alert('Error', 'Failed to start next turn. Please try again.');
+        setShowTurnSummary(true);
+        setTurnResult(turnResult);
+        return;
+      }
+      
+    } catch (error) {
+      console.error('❌ General error in proceedToNextTurn:', error);
+      Alert.alert('Error', 'Failed to proceed to next turn. Please try again.');
+      
+      // Restore turn summary if there was an error
+      setShowTurnSummary(true);
+      setTurnResult(turnResult);
+    }
+  };
+
+  const skipToNextTurn = async () => {
+    console.log('⏭️ SKIP TO NEXT TURN PRESSED!');
+    
+    if (!isHost) {
+      console.log('❌ Only host can skip to next turn');
+      Alert.alert('Error', 'Only the host can skip turns.');
+      return;
+    }
+    
+    if (!turnData || !currentRoom) {
+      console.log('❌ No turn data or room available');
+      Alert.alert('Error', 'No active turn to skip.');
+      return;
+    }
+    
+    // Show confirmation dialog
+    const attackerName = playerScores.find(p => p.userId === turnData.attackerId)?.displayName || 'Attacker';
+    const defenderName = playerScores.find(p => p.userId === turnData.defenderId)?.displayName || 'Defender';
+    
+    Alert.alert(
+      'Skip Turn',
+      `Are you sure you want to skip this turn?\n\n${attackerName} vs ${defenderName}\n\n• No points will be awarded\n• Same roles will continue\n• New song will be played`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { 
+          text: 'Skip Turn', 
+          style: 'destructive',
+          onPress: async () => {
+            await performSkipTurn();
+          }
+        }
+      ]
+    );
+  };
+
+  const performSkipTurn = async () => {
+    if (!turnData || !currentRoom) return;
+    
+    console.log('⏭️ Performing skip turn:', turnData.attackerId, 'vs', turnData.defenderId);
+    
+    // Keep the same roles - don't rotate
+    const currentAttacker = turnData.attackerId;
+    const currentDefender = turnData.defenderId;
+    
+    // Check if current attacker has songs
+    try {
+      const attackerSongs = await songStackService.getUserSongStack(currentAttacker, currentRoom.id);
+      if (attackerSongs.length === 0) {
+        const attackerName = playerScores.find(p => p.userId === currentAttacker)?.displayName || 'Player';
+        Alert.alert(
+          'No Songs Available', 
+          `${attackerName} has no songs left! Cannot start new turn.`,
+          [{ text: 'OK', style: 'default' }]
+        );
+        return;
+      }
+    } catch (error) {
+      console.error('Error checking attacker songs:', error);
+      Alert.alert('Error', 'Failed to check player songs. Please try again.');
+      return;
+    }
+    
+    try {
+      // Stop any audio
+      console.log('🔇 Stopping audio before skip');
+      await stopAudio();
+      
+      // Clear all modal states
+      setShowTurnSummary(false);
+      setTurnResult(null);
+      setShowVotingModal(false);
+      setVotes({});
+      setHasVoted(false);
+      
+      // Add a small delay
+      await new Promise(resolve => setTimeout(resolve, 100));
+      
+      // Start new turn with same roles
+      console.log('🚀 Skipping to new turn with same roles:', currentAttacker, 'vs', currentDefender);
+      await startNewTurn(currentAttacker, currentDefender);
+      console.log('✅ Turn skipped successfully');
+      
+    } catch (error) {
+      console.error('❌ Error skipping turn:', error);
+      Alert.alert('Error', 'Failed to skip turn. Please try again.');
+    }
   };
 
   const acceptGuessFromTurnState = async (guessId: string) => {
@@ -1607,10 +2344,18 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
 
       setTurnData(updatedTurnData);
       
-      // Sync the acceptance
-      await syncToDatabase({
-        turn_data: updatedTurnData,
-      });
+      // Sync the acceptance - bypass syncToDatabase for non-host attackers
+      if (isHost) {
+        await syncToDatabase({
+          turn_data: updatedTurnData,
+        });
+      } else {
+        // Non-host attacker can sync their acceptance directly
+        await gameSessionService.updateGameSyncState(gameSession.id, {
+          turn_data: updatedTurnData,
+        }, user!.id);
+        console.log('✅ Non-host attacker synced acceptance to database');
+      }
 
       // Trigger defender wins
       handleDefenderWins();
@@ -1619,75 +2364,6 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
       console.error('Error accepting guess:', error);
       Alert.alert('Error', 'Failed to accept guess.');
     }
-  };
-
-  const renderTurnStateComponent = () => {
-    if (!turnData || gamePhase === 'pre_game_countdown') return null;
-
-    const currentAttemptNumber = turnData.failedAttempts + 1;
-    const isDefenderTurn = currentAttemptNumber <= 3;
-    const currentPlayer = isDefenderTurn ? 
-      playerScores.find(p => p.userId === turnData.defenderId) :
-      playerScores.find(p => p.userId === turnData.challenges[0]);
-
-    return (
-      <View style={styles.turnStateContainer}>
-        <View style={styles.turnStateHeader}>
-          <Text style={styles.turnStateTitle}>
-            Turn {currentTurnIndex} • Attempt {currentAttemptNumber}/4
-          </Text>
-          <Text style={styles.turnStatePlayer}>
-            {isDefenderTurn ? 'Defender' : 'Challenger'}: {currentPlayer?.displayName}
-          </Text>
-        </View>
-
-        {/* Defender Guesses */}
-        {turnData.guesses.length > 0 && (
-          <View style={styles.guessesStateSection}>
-            <Text style={styles.stateSubtitle}>Guesses:</Text>
-            {turnData.guesses.map((guess, index) => {
-              const guesser = playerScores.find(p => p.userId === guess.player_id);
-              const isAttacker = guess.player_id === turnData.attackerId;
-              return (
-                <View key={index} style={styles.guessStateItem}>
-                  <Text style={styles.guessStateText}>
-                    "{guess.guess_text}" - {guesser?.displayName}
-                  </Text>
-                  {user?.id === turnData.attackerId && (
-                    <TouchableOpacity
-                      style={styles.acceptGuessButton}
-                      onPress={() => {
-                        console.log('🏆 Attacker accepting guess from turn state:', guess.id);
-                        acceptGuessFromTurnState(guess.id);
-                      }}
-                    >
-                      <Text style={styles.acceptGuessText}>✓ Accept</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              );
-            })}
-          </View>
-        )}
-
-        {/* Challengers */}
-        {turnData.challenges.length > 0 && (
-          <View style={styles.challengersStateSection}>
-            <Text style={styles.stateSubtitle}>Challengers:</Text>
-            <View style={styles.challengersList}>
-              {turnData.challenges.map((challengerId, index) => {
-                const challenger = playerScores.find(p => p.userId === challengerId);
-                return (
-                  <Text key={index} style={styles.challengerStateText}>
-                    ⚔️ {challenger?.displayName}
-                  </Text>
-                );
-              })}
-            </View>
-          </View>
-        )}
-      </View>
-    );
   };
 
   return (
@@ -1799,16 +2475,40 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
             
             {/* Host controls */}
             {isHost && (
-              <TouchableOpacity
-                style={styles.nextTurnButton}
-                onPress={proceedToNextTurn}
-              >
-                <Text style={styles.nextTurnButtonText}>Continue to Next Turn →</Text>
-              </TouchableOpacity>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <TouchableOpacity
+                  style={[styles.nextTurnButton, { flex: 1 }]}
+                  onPress={async () => {
+                    console.log('🔘 NEXT TURN BUTTON TAPPED!');
+                    console.log('🔘 Button state:', { isHost, turnResult: !!turnResult, showTurnSummary });
+                    await proceedToNextTurn();
+                  }}
+                >
+                  <Text style={styles.nextTurnButtonText}>Continue to Next Turn →</Text>
+                </TouchableOpacity>
+                
+                <TouchableOpacity
+                  style={[styles.nextTurnButton, { backgroundColor: '#FF6B6B', flex: 1 }]}
+                  onPress={skipToNextTurn}
+                >
+                  <Text style={styles.nextTurnButtonText}>⏭️ Skip Turn</Text>
+                </TouchableOpacity>
+              </View>
             )}
             
             {!isHost && (
               <Text style={styles.waitingText}>Waiting for host to continue...</Text>
+            )}
+            
+            {/* Debug info */}
+            {__DEV__ && (
+              <View style={{ padding: 10, backgroundColor: 'rgba(0,0,0,0.5)', margin: 10 }}>
+                <Text style={{ color: 'white', fontSize: 12 }}>
+                  DEBUG: isHost={String(isHost)}, showTurnSummary={String(showTurnSummary)}, 
+                  turnResult={turnResult ? 'exists' : 'null'}, 
+                  userId={user?.id}
+                </Text>
+              </View>
             )}
           </View>
         </View>
@@ -2493,6 +3193,76 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.6)',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 2,
+  },
+  phaseIndicator: {
+    marginTop: 8,
+    alignItems: 'center',
+  },
+  phaseContainer: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    alignItems: 'center',
+    minWidth: 200,
+  },
+  phaseText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  phaseSubtext: {
+    color: '#fff',
+    fontSize: 12,
+    textAlign: 'center',
+    marginTop: 2,
+    opacity: 0.9,
+  },
+  challengerPhaseText: {
+    color: '#FF6B47',
+    fontSize: 14,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+  spectatorText: {
+    color: '#666',
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  defenderInstructions: {
+    color: '#666',
+    fontSize: 14,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  guessInputContainer: {
+    marginBottom: 16,
+  },
+  submitButtonDisabled: {
+    backgroundColor: '#ccc',
+    opacity: 0.6,
+  },
+  submittedContainer: {
+    backgroundColor: 'rgba(29, 185, 84, 0.1)',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  submittedText: {
+    color: '#1DB954',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  submittedSubtext: {
+    color: '#666',
+    fontSize: 12,
+  },
+  challengeButtonDisabled: {
+    backgroundColor: '#ccc',
+    opacity: 0.6,
   },
 });
 

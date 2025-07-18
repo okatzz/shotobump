@@ -7,6 +7,7 @@ import { isSpotifyRedirect } from '../utils/redirectHandler';
 
 interface AuthContextType {
   user: User | null;
+  isPremium: boolean;
   isLoading: boolean;
   isAuthenticated: boolean;
   signIn: () => Promise<void>;
@@ -23,6 +24,7 @@ interface AuthProviderProps {
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
+  const [isPremium, setIsPremium] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
@@ -77,6 +79,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       
       // Authenticate with Spotify
       const { user: spotifyUser, accessToken, refreshToken } = await spotifyService.authenticate();
+      
+      // Store premium status
+      setIsPremium(spotifyUser.product === 'premium');
       
       // Check if user exists in our database (skip if using placeholder Supabase)
       const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
@@ -322,6 +327,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const value: AuthContextType = {
     user,
+    isPremium,
     isLoading,
     isAuthenticated,
     signIn,

@@ -11,6 +11,7 @@ import {
   Clipboard,
   ActivityIndicator,
   RefreshControl,
+  Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRoom } from '../contexts/RoomContext';
@@ -18,6 +19,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { RoomMember } from '../types';
 import { GameSessionService, GameSession } from '../services/gameSessionService';
 import { SongStackService } from '../services/songStackService';
+import { SpotifyService } from '../services/spotify';
 
 interface RoomScreenProps {
   navigation: any;
@@ -25,15 +27,21 @@ interface RoomScreenProps {
 
 const RoomScreen: React.FC<RoomScreenProps> = ({ navigation }) => {
   const { user } = useAuth();
-  const { currentRoom, roomMembers, isLoading, error, leaveRoom, refreshRoom } = useRoom();
+  const { currentRoom, roomMembers, isLoading, error, leaveRoom, refreshRoom, setSelectedSpotifyDeviceId } = useRoom();
   const [refreshing, setRefreshing] = useState(false);
   const [currentGameSession, setCurrentGameSession] = useState<GameSession | null>(null);
   const [isStartingGame, setIsStartingGame] = useState(false);
   const [showGameStartBanner, setShowGameStartBanner] = useState(false);
   const [gameStartCountdown, setGameStartCountdown] = useState(5);
+  const [showDeviceModal, setShowDeviceModal] = useState(false);
+  const [devices, setDevices] = useState<any[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  const [isTestingPlayback, setIsTestingPlayback] = useState(false);
+  const [deviceError, setDeviceError] = useState<string | null>(null);
 
   const gameSessionService = GameSessionService.getInstance();
   const songStackService = SongStackService.getInstance();
+  const spotifyService = SpotifyService.getInstance();
 
   useEffect(() => {
     // Don't navigate away if we're still loading
@@ -183,6 +191,38 @@ const RoomScreen: React.FC<RoomScreenProps> = ({ navigation }) => {
 
   const isHost = user?.id === currentRoom?.host_id;
 
+  // Fetch devices when modal opens
+  useEffect(() => {
+    if (showDeviceModal) {
+      (async () => {
+        try {
+          setDeviceError(null);
+          const foundDevices = await spotifyService.getAvailableDevices();
+          setDevices(foundDevices);
+        } catch (err) {
+          setDeviceError('Failed to fetch devices. Make sure you are logged in and have the Spotify app open.');
+        }
+      })();
+    }
+  }, [showDeviceModal]);
+
+  const handleTestPlayback = async () => {
+    if (!selectedDeviceId) return;
+    setIsTestingPlayback(true);
+    setDeviceError(null);
+    try {
+      // Use a short, public Spotify track URI (e.g., "spotify:track:11dFghVXANMlKmJXsNCbNl" = Daft Punk - Get Lucky (Radio Edit))
+      await spotifyService.playTrackOnActiveDevice('spotify:track:11dFghVXANMlKmJXsNCbNl', 0, selectedDeviceId);
+      Alert.alert('Test Playback', 'If your device is active, you should hear music now!');
+      // Store the selected device in context for use in gameplay
+      setSelectedSpotifyDeviceId(selectedDeviceId);
+    } catch (err) {
+      setDeviceError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsTestingPlayback(false);
+    }
+  };
+
   const renderMember = (member: RoomMember, index: number) => (
     <View key={member.user_id} style={styles.memberCard}>
       <Image
@@ -289,6 +329,12 @@ const RoomScreen: React.FC<RoomScreenProps> = ({ navigation }) => {
             >
               <Text style={styles.manageSongsButtonText}>🎵 Manage My Songs</Text>
             </TouchableOpacity>
+            {/* Set up Spotify Device - Host only */}
+            {isHost && (
+              <TouchableOpacity style={styles.manageSongsButton} onPress={() => setShowDeviceModal(true)}>
+                <Text style={styles.manageSongsButtonText}>🎧 Set up Spotify Device</Text>
+              </TouchableOpacity>
+            )}
 
             {/* Game Status and Controls */}
             {currentGameSession ? (
@@ -352,6 +398,64 @@ const RoomScreen: React.FC<RoomScreenProps> = ({ navigation }) => {
           </View>
         )}
       </SafeAreaView>
+
+      {/* Device Setup Modal */}
+      <Modal
+        visible={showDeviceModal}
+        animationType="slide"
+        transparent={true}
+        onRequestClose={() => setShowDeviceModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Select a Spotify Device</Text>
+            {deviceError && <Text style={styles.errorText}>{deviceError}</Text>}
+            {devices.length === 0 ? (
+              <Text style={styles.noDevicesText}>
+                No devices found. Open Spotify on your phone or computer and play any song to activate a device.
+              </Text>
+            ) : (
+              <ScrollView style={styles.devicesList}>
+                {devices.map(device => (
+                  <TouchableOpacity
+                    key={device.id}
+                    style={[
+                      styles.deviceItem,
+                      selectedDeviceId === device.id && styles.deviceItemSelected
+                    ]}
+                    onPress={() => setSelectedDeviceId(device.id)}
+                  >
+                    <Text style={[
+                      styles.deviceText,
+                      selectedDeviceId === device.id && styles.deviceTextSelected
+                    ]}>
+                      {device.name} ({device.type}){device.is_active ? ' - Active' : ''}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+            )}
+            <TouchableOpacity
+              style={[
+                styles.testButton,
+                (!selectedDeviceId || isTestingPlayback) && styles.testButtonDisabled
+              ]}
+              onPress={handleTestPlayback}
+              disabled={!selectedDeviceId || isTestingPlayback}
+            >
+              <Text style={styles.testButtonText}>
+                {isTestingPlayback ? 'Testing...' : 'Test Playback'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.closeButton}
+              onPress={() => setShowDeviceModal(false)}
+            >
+              <Text style={styles.closeButtonText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </LinearGradient>
   );
 };
@@ -775,6 +879,78 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontWeight: '600',
     opacity: 0.9,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+    maxHeight: '80%',
+  },
+  modalTitle: {
+    fontWeight: 'bold',
+    fontSize: 18,
+    marginBottom: 16,
+    textAlign: 'center',
+    color: '#333',
+  },
+  devicesList: {
+    maxHeight: 200,
+    marginBottom: 16,
+  },
+  deviceItem: {
+    padding: 12,
+    backgroundColor: '#f0f0f0',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  deviceItemSelected: {
+    backgroundColor: '#1DB954',
+  },
+  deviceText: {
+    color: '#333',
+    fontSize: 14,
+  },
+  deviceTextSelected: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  noDevicesText: {
+    color: '#666',
+    textAlign: 'center',
+    marginBottom: 16,
+    fontSize: 14,
+  },
+  testButton: {
+    backgroundColor: '#1DB954',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  testButtonDisabled: {
+    backgroundColor: '#ccc',
+  },
+  testButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  closeButton: {
+    alignItems: 'center',
+    padding: 8,
+  },
+  closeButtonText: {
+    color: '#888',
+    fontSize: 16,
   },
 });
 

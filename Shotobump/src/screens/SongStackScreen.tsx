@@ -26,7 +26,7 @@ interface SongStackScreenProps {
 type TabType = 'search' | 'top_tracks' | 'playlists';
 
 const SongStackScreen: React.FC<SongStackScreenProps> = ({ navigation }) => {
-  const { user } = useAuth();
+  const { user, isPremium } = useAuth();
   const { currentRoom } = useRoom();
   const [activeTab, setActiveTab] = useState<TabType>('search');
   const [searchQuery, setSearchQuery] = useState('');
@@ -235,91 +235,46 @@ const SongStackScreen: React.FC<SongStackScreenProps> = ({ navigation }) => {
   };
 
   const renderSearchResult = (track: SpotifyTrack) => {
-    const hasPreview = !!track.preview_url;
-    
-    const testAudio = async () => {
-      if (!track.preview_url) {
-        Alert.alert('No Preview', 'This song does not have an audio preview available.');
+    const playOnSpotify = async () => {
+      if (!isPremium) {
+        Alert.alert('Spotify Premium Required', 'You must be a Spotify Premium user to play full songs.');
         return;
       }
-      
       try {
-        console.log('🎵 Testing audio for:', track.name);
-        const { sound } = await Audio.Sound.createAsync(
-          { uri: track.preview_url },
-          { shouldPlay: true, volume: 0.7 }
-        );
-        
-        // Auto-stop after 10 seconds
-        setTimeout(async () => {
-          try {
-            await sound.stopAsync();
-            await sound.unloadAsync();
-          } catch (e) {
-            console.error('Error stopping test audio:', e);
-          }
-        }, 10000);
-        
-        Alert.alert('Audio Test', `Playing preview of "${track.name}" for 10 seconds...`);
+        const trackUri = `spotify:track:${track.id}`;
+        await spotifyService.playTrackOnActiveDevice(trackUri, 0);
+        Alert.alert('Playing on Spotify', 'The full song is now playing on your Spotify app!');
       } catch (error) {
-        console.error('Error testing audio:', error);
-        Alert.alert('Audio Error', 'Failed to play audio preview. This song may not work in the game.');
+        Alert.alert('Spotify Playback Error', error instanceof Error ? error.message : String(error));
       }
     };
-    
     return (
       <View key={track.id} style={styles.trackCard}>
         <Image source={{ uri: track.album.images[0]?.url }} style={styles.albumArt} />
         <View style={styles.trackInfo}>
           <View style={styles.trackHeader}>
             <Text style={styles.trackName} numberOfLines={1}>{track.name}</Text>
-            {hasPreview ? (
-              <View style={styles.previewBadge}>
-                <Text style={styles.previewBadgeText}>🎵</Text>
-              </View>
-            ) : (
-              <View style={styles.noPreviewBadge}>
-                <Text style={styles.noPreviewBadgeText}>🔇</Text>
-              </View>
-            )}
           </View>
           <Text style={styles.artistName} numberOfLines={1}>
             {track.artists.map(artist => artist.name).join(', ')}
           </Text>
           <Text style={styles.albumName} numberOfLines={1}>{track.album.name}</Text>
-          <Text style={styles.previewStatus}>
-            {hasPreview ? '✅ Audio available' : '❌ No audio preview'}
-          </Text>
         </View>
         <View style={styles.trackActions}>
-          {/* Test Audio Button */}
+          {/* Play on Spotify Button */}
           <TouchableOpacity
-            style={[
-              styles.testButton,
-              !hasPreview && styles.testButtonDisabled
-            ]}
-            onPress={testAudio}
-            disabled={!hasPreview}
+            style={styles.testButton}
+            onPress={playOnSpotify}
           >
-            <Text style={[
-              styles.testButtonText,
-              !hasPreview && styles.testButtonTextDisabled
-            ]}>▶️</Text>
+            <Text style={styles.testButtonText}>▶️</Text>
           </TouchableOpacity>
-          
           {/* Add Button */}
           <TouchableOpacity
-            style={[
-              styles.addButton,
-              !hasPreview && styles.addButtonDisabled
-            ]}
+            style={styles.addButton}
             onPress={() => addSongToStack(track)}
             disabled={isLoading}
           >
-            <Text style={[
-              styles.addButtonText,
-              !hasPreview && styles.addButtonTextDisabled
-            ]}>+</Text>
+            <Text style={styles.addButtonText}>+</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -382,25 +337,50 @@ const SongStackScreen: React.FC<SongStackScreenProps> = ({ navigation }) => {
           </TouchableOpacity>
         </View>
 
-        {/* Preview Filter Toggle */}
-        <View style={styles.filterContainer}>
-          <TouchableOpacity
-            style={[styles.filterButton, showOnlyWithPreview && styles.filterButtonActive]}
-            onPress={() => setShowOnlyWithPreview(!showOnlyWithPreview)}
-          >
-            <Text style={[styles.filterButtonText, showOnlyWithPreview && styles.filterButtonTextActive]}>
-              🎵 Only songs with audio previews
-            </Text>
-          </TouchableOpacity>
-          {searchResults.length > 0 && (
-            <Text style={styles.filterInfo}>
-              {showOnlyWithPreview 
-                ? `${filteredResults.length} of ${searchResults.length} songs have previews`
-                : `${searchResults.filter(t => t.preview_url).length} of ${searchResults.length} songs have previews`
-              }
-            </Text>
-          )}
-        </View>
+        {/* Test All Available Button */}
+        {searchResults.filter(t => t.preview_url).length > 0 && (
+          <View style={styles.testAllContainer}>
+            <TouchableOpacity
+              style={styles.testAllButton}
+              onPress={async () => {
+                const songsWithPreviews = searchResults.filter(t => t.preview_url);
+                Alert.alert(
+                  'Test All Available',
+                  `Test ${songsWithPreviews.length} songs with previews? Each will play for 10 seconds.`,
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { 
+                      text: 'Test All', 
+                      onPress: async () => {
+                        for (let i = 0; i < songsWithPreviews.length; i++) {
+                          const song = songsWithPreviews[i];
+                          try {
+                            console.log(`🎵 Testing ${i + 1}/${songsWithPreviews.length}: ${song.name}`);
+                            const { sound } = await Audio.Sound.createAsync(
+                              { uri: song.preview_url! },
+                              { shouldPlay: true, volume: 0.6 }
+                            );
+                            
+                            // Wait 12 seconds before next song (10s play + 2s gap)
+                            await new Promise(resolve => setTimeout(resolve, 12000));
+                            
+                            await sound.stopAsync();
+                            await sound.unloadAsync();
+                          } catch (error) {
+                            console.error(`Error testing ${song.name}:`, error);
+                          }
+                        }
+                        Alert.alert('Test Complete', 'Finished testing all available songs!');
+                      }
+                    }
+                  ]
+                );
+              }}
+            >
+              <Text style={styles.testAllButtonText}>🎵 Test All Available ({searchResults.filter(t => t.preview_url).length})</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {isSearching && (
           <View style={styles.loadingContainer}>
@@ -425,26 +405,6 @@ const SongStackScreen: React.FC<SongStackScreenProps> = ({ navigation }) => {
       <View style={styles.tabContent}>
         <Text style={styles.sectionTitle}>Your Top Tracks</Text>
         <Text style={styles.sectionSubtitle}>Based on your recent listening</Text>
-
-        {/* Preview Filter Toggle */}
-        <View style={styles.filterContainer}>
-          <TouchableOpacity
-            style={[styles.filterButton, showOnlyWithPreview && styles.filterButtonActive]}
-            onPress={() => setShowOnlyWithPreview(!showOnlyWithPreview)}
-          >
-            <Text style={[styles.filterButtonText, showOnlyWithPreview && styles.filterButtonTextActive]}>
-              🎵 Only songs with audio previews
-            </Text>
-          </TouchableOpacity>
-          {topTracks.length > 0 && (
-            <Text style={styles.filterInfo}>
-              {showOnlyWithPreview 
-                ? `${filteredTracks.length} of ${topTracks.length} tracks have previews`
-                : `${topTracks.filter(t => t.preview_url).length} of ${topTracks.length} tracks have previews`
-              }
-            </Text>
-          )}
-        </View>
 
         {isLoadingTopTracks ? (
           <View style={styles.loadingContainer}>
@@ -518,26 +478,6 @@ const SongStackScreen: React.FC<SongStackScreenProps> = ({ navigation }) => {
             </Text>
           </View>
 
-          {/* Preview Filter Toggle */}
-          <View style={styles.filterContainer}>
-            <TouchableOpacity
-              style={[styles.filterButton, showOnlyWithPreview && styles.filterButtonActive]}
-              onPress={() => setShowOnlyWithPreview(!showOnlyWithPreview)}
-            >
-              <Text style={[styles.filterButtonText, showOnlyWithPreview && styles.filterButtonTextActive]}>
-                🎵 Only songs with audio previews
-              </Text>
-            </TouchableOpacity>
-            {playlistTracks.length > 0 && (
-              <Text style={styles.filterInfo}>
-                {showOnlyWithPreview 
-                  ? `${playlistTracks.filter(track => track.preview_url).length} of ${playlistTracks.length} tracks have previews`
-                  : `${playlistTracks.filter(t => t.preview_url).length} of ${playlistTracks.length} tracks have previews`
-                }
-              </Text>
-            )}
-          </View>
-
           {isLoading ? (
             <View style={styles.loadingContainer}>
               <ActivityIndicator size="small" color="#1DB954" />
@@ -545,10 +485,7 @@ const SongStackScreen: React.FC<SongStackScreenProps> = ({ navigation }) => {
             </View>
           ) : (
             <ScrollView style={styles.resultsList}>
-              {(showOnlyWithPreview 
-                ? playlistTracks.filter(track => track.preview_url)
-                : playlistTracks
-              ).map(renderSearchResult)}
+              {playlistTracks.map(renderSearchResult)}
             </ScrollView>
           )}
         </>
@@ -1234,6 +1171,25 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   audioInfoHighlight: {
+    fontWeight: 'bold',
+  },
+  testAllContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+  },
+  testAllButton: {
+    backgroundColor: '#32CD32',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#F5E6D3',
+  },
+  testAllButtonText: {
+    color: '#F5E6D3',
+    fontSize: 16,
     fontWeight: 'bold',
   },
 });

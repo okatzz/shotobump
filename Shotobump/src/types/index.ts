@@ -115,4 +115,5 @@ export interface SpotifyUser {
   display_name: string;
   images: Array<{ url: string }>;
   email: string;
+  product: string; // 'premium', 'free', etc.
 } 

@@ -4,7 +4,7 @@ import { UserSongStack } from './songStackService';
 
 export type GameState = 'waiting' | 'playing' | 'paused' | 'finished';
 export type TurnState = 'playing_audio' | 'guessing' | 'voting' | 'results' | 'completed';
-export type GamePhase = 'pre_game_countdown' | 'turn_countdown' | 'audio_playing' | 'guessing' | 'voting' | 'turn_results' | 'preparing_next_turn' | 'game_finished';
+export type GamePhase = 'pre_game_countdown' | 'turn_countdown' | 'audio_playing' | 'guessing' | 'voting' | 'turn_results' | 'game_finished';
 
 export interface GameSession {
   id: string;
@@ -89,10 +89,10 @@ export interface GameSyncState {
     challenges: string[];
     votingResults?: any;
     failedAttempts: number;
+    currentGuesser?: string; // Who is currently guessing (defender or challenger)
+    isInChallengerPhase?: boolean; // True when challenger is guessing
   };
   show_album_art: boolean;
-  show_turn_summary?: boolean;
-  turn_result?: any;
   updated_at: string;
   updated_by: string;
 }

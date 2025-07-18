@@ -9,6 +9,7 @@ interface RoomContextType {
   roomMembers: RoomMember[];
   isLoading: boolean;
   error: string | null;
+  selectedSpotifyDeviceId: string | null;
   
   // Actions
   createRoom: () => Promise<string | null>;
@@ -16,6 +17,7 @@ interface RoomContextType {
   leaveRoom: () => Promise<void>;
   refreshRoom: () => Promise<void>;
   clearError: () => void;
+  setSelectedSpotifyDeviceId: (deviceId: string | null) => void;
 }
 
 const RoomContext = createContext<RoomContextType | undefined>(undefined);
@@ -30,6 +32,7 @@ export const RoomProvider: React.FC<RoomProviderProps> = ({ children }) => {
   const [roomMembers, setRoomMembers] = useState<RoomMember[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selectedSpotifyDeviceId, setSelectedSpotifyDeviceId] = useState<string | null>(null);
 
   const roomService = RoomService.getInstance();
 
@@ -175,11 +178,13 @@ export const RoomProvider: React.FC<RoomProviderProps> = ({ children }) => {
     roomMembers,
     isLoading,
     error,
+    selectedSpotifyDeviceId,
     createRoom,
     joinRoom,
     leaveRoom,
     refreshRoom,
     clearError,
+    setSelectedSpotifyDeviceId,
   };
 
   return (
