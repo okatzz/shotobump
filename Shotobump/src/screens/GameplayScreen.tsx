@@ -12,6 +12,7 @@ import {
   Modal,
   Image,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Audio } from 'expo-av';
@@ -2548,11 +2549,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollView: {
-    flex: 1,
+    height: Platform.OS === 'web' ? screenHeight - 100 : undefined, // Fixed height for web only
+    flex: Platform.OS === 'web' ? undefined : 1, // Use flex for mobile
+    // Explicitly set height to constrain ScrollView
   },
   scrollViewContent: {
     paddingBottom: isSmallDevice ? 50 : 40,
     paddingTop: 10,
+    minHeight: Platform.OS === 'web' ? screenHeight + 800 : screenHeight + 500, // Extra height for web
     // Remove minHeight constraint that was preventing proper scrolling
   },
   countdownContainer: {

@@ -9,6 +9,7 @@ import {
   SafeAreaView,
   ScrollView,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../contexts/AuthContext';
@@ -167,11 +168,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   gradient: {
-    flex: 1,
+    flex: Platform.OS === 'web' ? undefined : 1,
+    height: Platform.OS === 'web' ? height : undefined, // Fixed height for web
+    // Ensure gradient doesn't interfere with scrolling
   },
   content: {
     paddingHorizontal: isSmallDevice ? 20 : 30,
     paddingVertical: isSmallDevice ? 20 : 40,
+    minHeight: Platform.OS === 'web' ? height + 800 : height + 500, // Extra height for web
     // Remove flexGrow to allow proper scrolling
   },
   header: {

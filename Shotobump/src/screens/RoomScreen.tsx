@@ -13,6 +13,7 @@ import {
   RefreshControl,
   Modal,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRoom } from '../contexts/RoomContext';
@@ -457,10 +458,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollView: {
-    flex: 1,
+    height: Platform.OS === 'web' ? height - 100 : undefined, // Fixed height for web only
+    flex: Platform.OS === 'web' ? undefined : 1, // Use flex for mobile
+    // Explicitly set height to constrain ScrollView
   },
   scrollViewContent: {
     paddingBottom: isSmallDevice ? 30 : 20,
+    minHeight: Platform.OS === 'web' ? height + 800 : height + 500, // Extra height for web
     // Remove flexGrow to allow proper scrolling
   },
   loadingContainer: {
