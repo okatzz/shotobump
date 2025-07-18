@@ -11,6 +11,7 @@ import {
   TextInput,
   Modal,
   Image,
+  Dimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Audio } from 'expo-av';
@@ -47,6 +48,18 @@ interface TurnData {
   currentGuesser?: string; // Who is currently guessing (defender or challenger)
   isInChallengerPhase: boolean; // True when challenger is guessing
 }
+
+// Get device dimensions for responsive design
+const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
+const isSmallDevice = screenWidth < 380 || screenHeight < 700;
+const isLargeDevice = screenWidth > 500;
+
+// Responsive font size function
+const getResponsiveFontSize = (baseSize: number) => {
+  if (isSmallDevice) return baseSize * 0.8;
+  if (isLargeDevice) return baseSize * 1.1;
+  return baseSize;
+};
 
 const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) => {
   const { user, isPremium } = useAuth();
@@ -1737,6 +1750,11 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
       >
         <View style={styles.modalOverlay}>
           <View style={styles.votingModal}>
+            <ScrollView 
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ flexGrow: 1 }}
+              style={{ maxHeight: screenHeight * 0.7 }}
+            >
             <Text style={styles.votingTitle}>Vote on the Answer</Text>
             <Text style={styles.votingAnswer}>"{guess.guess_text}"</Text>
             <Text style={styles.votingBy}>by {guesser?.displayName}</Text>
@@ -1805,6 +1823,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
                 </TouchableOpacity>
               )}
             </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -2376,6 +2395,8 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
           style={styles.scrollView}
           contentContainerStyle={styles.scrollViewContent}
           showsVerticalScrollIndicator={false}
+          bounces={true}
+          alwaysBounceVertical={true}
         >
           {gamePhase === 'pre_game_countdown' && renderPreGameCountdown()}
           
@@ -2388,6 +2409,9 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
               {renderTurnStateComponent()}
             </>
           )}
+          
+          {/* Dynamic spacer to ensure scrolling works */}
+          <View style={{ height: Math.max(100, screenHeight * 0.3) }} />
         </ScrollView>
       </LinearGradient>
 
@@ -2402,6 +2426,11 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
       >
         <View style={styles.modalOverlay}>
           <View style={styles.turnSummaryModal}>
+            <ScrollView 
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ flexGrow: 1 }}
+              style={{ maxHeight: screenHeight * 0.8 }}
+            >
             <Text style={styles.summaryTitle}>Turn Complete!</Text>
             
             {/* Winner Section */}
@@ -2510,6 +2539,7 @@ const GameplayScreen: React.FC<GameplayScreenProps> = ({ navigation, route }) =>
                 </Text>
               </View>
             )}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -2528,26 +2558,28 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   scrollViewContent: {
-    flexGrow: 1,
-    paddingBottom: 20,
+    paddingBottom: isSmallDevice ? 50 : 40,
+    paddingTop: 10,
+    minHeight: screenHeight + 200, // Ensure content exceeds screen height to trigger scrolling
   },
   countdownContainer: {
-    flex: 1,
+    minHeight: screenHeight - 100, // Use actual height instead of flex
     justifyContent: 'center',
     alignItems: 'center',
+    paddingVertical: isSmallDevice ? 20 : 40,
   },
   countdownTitle: {
-    fontSize: 24,
+    fontSize: getResponsiveFontSize(24),
     fontWeight: 'bold',
     color: '#F5E6D3',
-    marginBottom: 15,
+    marginBottom: isSmallDevice ? 10 : 15,
     textAlign: 'center',
     textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 2, height: 2 },
     textShadowRadius: 4,
   },
   countdownNumber: {
-    fontSize: 100,
+    fontSize: isSmallDevice ? 60 : isLargeDevice ? 120 : 80,
     fontWeight: 'bold',
     color: '#F5E6D3',
     textAlign: 'center',
@@ -2556,9 +2588,9 @@ const styles = StyleSheet.create({
     textShadowRadius: 6,
   },
   countdownSubtitle: {
-    fontSize: 18,
+    fontSize: getResponsiveFontSize(18),
     color: '#8B4B9B',
-    marginTop: 15,
+    marginTop: isSmallDevice ? 10 : 15,
     textAlign: 'center',
     textShadowColor: 'rgba(0, 0, 0, 0.6)',
     textShadowOffset: { width: 1, height: 1 },
@@ -2568,15 +2600,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 15,
-    paddingVertical: 12,
+    paddingHorizontal: isSmallDevice ? 10 : 15,
+    paddingVertical: isSmallDevice ? 8 : 12,
     backgroundColor: 'rgba(139, 75, 155, 0.4)',
-    borderBottomWidth: 3,
+    borderBottomWidth: isSmallDevice ? 2 : 3,
     borderBottomColor: '#F5E6D3',
     borderRadius: 20,
-    marginHorizontal: 10,
+    marginHorizontal: isSmallDevice ? 8 : 10,
     marginTop: 5,
-    marginBottom: 10,
+    marginBottom: isSmallDevice ? 8 : 10,
   },
   backButton: {
     width: 40,
@@ -2590,7 +2622,7 @@ const styles = StyleSheet.create({
   },
   backButtonText: {
     color: '#F5E6D3',
-    fontSize: 22,
+    fontSize: getResponsiveFontSize(22),
     fontWeight: 'bold',
   },
   gameInfo: {
@@ -2599,7 +2631,7 @@ const styles = StyleSheet.create({
   },
   gameTitle: {
     color: '#F5E6D3',
-    fontSize: 20,
+    fontSize: getResponsiveFontSize(20),
     fontWeight: 'bold',
     textShadowColor: 'rgba(0, 0, 0, 0.8)',
     textShadowOffset: { width: 1, height: 1 },
@@ -2607,7 +2639,7 @@ const styles = StyleSheet.create({
   },
   gamePhaseText: {
     color: '#F5E6D3',
-    fontSize: 14,
+    fontSize: getResponsiveFontSize(14),
     marginTop: 2,
     fontWeight: '600',
     opacity: 0.9,
@@ -2643,14 +2675,14 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   playersContainer: {
-    paddingHorizontal: 15,
-    marginBottom: 15,
+    paddingHorizontal: isSmallDevice ? 10 : 15,
+    marginBottom: isSmallDevice ? 10 : 15,
   },
   playersTitle: {
     color: '#F5E6D3',
-    fontSize: 18,
+    fontSize: getResponsiveFontSize(18),
     fontWeight: 'bold',
-    marginBottom: 12,
+    marginBottom: isSmallDevice ? 8 : 12,
     textShadowColor: 'rgba(0, 0, 0, 0.6)',
     textShadowOffset: { width: 1, height: 1 },
     textShadowRadius: 3,
@@ -2689,8 +2721,9 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   turnContainer: {
-    paddingHorizontal: 15,
-    marginBottom: 15,
+    paddingHorizontal: isSmallDevice ? 10 : 15,
+    marginBottom: isSmallDevice ? 10 : 15,
+    minHeight: isSmallDevice ? 150 : 200, // Ensure minimum height
   },
   turnHeader: {
     flexDirection: 'row',
@@ -2708,11 +2741,11 @@ const styles = StyleSheet.create({
   },
   timer: {
     color: '#F5E6D3',
-    fontSize: 24,
+    fontSize: getResponsiveFontSize(24),
     fontWeight: 'bold',
     backgroundColor: 'rgba(139, 75, 155, 0.7)',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
+    paddingHorizontal: isSmallDevice ? 10 : 12,
+    paddingVertical: isSmallDevice ? 4 : 6,
     borderRadius: 20,
     borderWidth: 2,
     borderColor: '#F5E6D3',
@@ -2728,12 +2761,13 @@ const styles = StyleSheet.create({
   },
   songContainer: {
     backgroundColor: 'rgba(139, 75, 155, 0.6)',
-    padding: 20,
+    padding: isSmallDevice ? 15 : 20,
     borderWidth: 3,
     borderColor: '#F5E6D3',
     borderRadius: 20,
     flexDirection: 'row',
     alignItems: 'center',
+    minHeight: isSmallDevice ? 100 : 120, // Ensure minimum height
   },
   albumArtContainer: {
     position: 'relative',
@@ -2759,7 +2793,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   albumArtHint: {
-    fontSize: 24,
+    fontSize: getResponsiveFontSize(24),
     color: '#fff',
   },
   revealedOverlay: {
@@ -2804,25 +2838,28 @@ const styles = StyleSheet.create({
     backgroundColor: '#1DB954',
   },
   guessingContainer: {
-    paddingHorizontal: 15,
-    marginBottom: 15,
+    paddingHorizontal: isSmallDevice ? 10 : 15,
+    marginBottom: isSmallDevice ? 10 : 15,
+    minHeight: isSmallDevice ? 120 : 150, // Ensure minimum height
   },
   defenderSection: {
     backgroundColor: 'rgba(245, 230, 211, 0.95)',
-    padding: 15,
+    padding: isSmallDevice ? 12 : 15,
     borderRadius: 20,
     marginBottom: 12,
     borderWidth: 3,
     borderColor: '#8B4B9B',
+    minHeight: isSmallDevice ? 140 : 160, // Ensure minimum height
   },
   spectatorSection: {
     backgroundColor: 'rgba(245, 230, 211, 0.95)',
-    padding: 15,
+    padding: isSmallDevice ? 12 : 15,
     borderRadius: 20,
     marginBottom: 12,
     alignItems: 'center',
     borderWidth: 3,
     borderColor: '#8B4B9B',
+    minHeight: isSmallDevice ? 80 : 100, // Ensure minimum height
   },
   sectionTitle: {
     fontSize: 16,
@@ -2917,21 +2954,22 @@ const styles = StyleSheet.create({
   },
   votingModal: {
     backgroundColor: '#F5E6D3',
-    padding: 20,
+    padding: isSmallDevice ? 15 : 20,
     borderRadius: 20,
-    width: '90%',
-    maxHeight: '70%',
-    borderWidth: 4,
+    width: isSmallDevice ? '95%' : '90%',
+    maxHeight: isSmallDevice ? '80%' : '70%',
+    borderWidth: isSmallDevice ? 2 : 4,
     borderColor: '#8B4B9B',
+    maxWidth: 500, // Prevent too wide on large screens
   },
   votingTitle: {
-    fontSize: 20,
+    fontSize: getResponsiveFontSize(20),
     fontWeight: 'bold',
     color: '#000',
-    marginBottom: 16,
+    marginBottom: isSmallDevice ? 12 : 16,
   },
   votingAnswer: {
-    fontSize: 18,
+    fontSize: getResponsiveFontSize(18),
     fontWeight: 'bold',
     color: '#000',
     marginBottom: 8,
@@ -2981,18 +3019,19 @@ const styles = StyleSheet.create({
   },
   turnSummaryModal: {
     backgroundColor: '#F5E6D3',
-    padding: 20,
+    padding: isSmallDevice ? 15 : 20,
     borderRadius: 20,
-    width: '90%',
-    maxHeight: '70%',
-    borderWidth: 4,
+    width: isSmallDevice ? '95%' : '90%',
+    maxHeight: isSmallDevice ? '85%' : '75%',
+    borderWidth: isSmallDevice ? 2 : 4,
     borderColor: '#8B4B9B',
+    maxWidth: 500, // Prevent too wide on large screens
   },
   summaryTitle: {
-    fontSize: 20,
+    fontSize: getResponsiveFontSize(20),
     fontWeight: 'bold',
     color: '#000',
-    marginBottom: 16,
+    marginBottom: isSmallDevice ? 12 : 16,
   },
   winnerSection: {
     marginBottom: 16,
@@ -3097,11 +3136,13 @@ const styles = StyleSheet.create({
   },
   turnStateContainer: {
     backgroundColor: 'rgba(245, 230, 211, 0.95)',
-    padding: 16,
+    padding: isSmallDevice ? 12 : 16,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     borderTopWidth: 3,
     borderTopColor: '#8B4B9B',
+    minHeight: isSmallDevice ? 180 : 220, // Ensure minimum height
+    marginBottom: isSmallDevice ? 20 : 30, // Add bottom margin
   },
   turnStateHeader: {
     flexDirection: 'row',
