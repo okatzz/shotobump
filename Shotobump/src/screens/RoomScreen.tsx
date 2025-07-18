@@ -49,6 +49,7 @@ const RoomScreen: React.FC<RoomScreenProps> = ({ navigation }) => {
   const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [devices, setDevices] = useState<any[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  const [isTestingPlayback, setIsTestingPlayback] = useState(false);
 
   const [deviceError, setDeviceError] = useState<string | null>(null);
 
@@ -220,6 +221,23 @@ const RoomScreen: React.FC<RoomScreenProps> = ({ navigation }) => {
   }, [showDeviceModal]);
 
 
+
+  const handleTestPlayback = async () => {
+    if (!selectedDeviceId) return;
+    setIsTestingPlayback(true);
+    setDeviceError(null);
+    try {
+      // Use a short, public Spotify track URI (e.g., "spotify:track:11dFghVXANMlKmJXsNCbNl" = Daft Punk - Get Lucky (Radio Edit))
+      await spotifyService.playTrackOnActiveDevice('spotify:track:11dFghVXANMlKmJXsNCbNl', 0, selectedDeviceId);
+      Alert.alert('Test Playback', 'If your device is active, you should hear music now!');
+      // Store the selected device in context for use in gameplay
+      setSelectedSpotifyDeviceId(selectedDeviceId);
+    } catch (err) {
+      setDeviceError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsTestingPlayback(false);
+    }
+  };
 
   const renderMember = (member: RoomMember, index: number) => (
     <View key={member.user_id} style={styles.memberCard}>
@@ -436,6 +454,19 @@ const RoomScreen: React.FC<RoomScreenProps> = ({ navigation }) => {
                 ))}
               </ScrollView>
             )}
+
+            <TouchableOpacity
+              style={[
+                styles.testButton,
+                (!selectedDeviceId || isTestingPlayback) && styles.testButtonDisabled
+              ]}
+              onPress={handleTestPlayback}
+              disabled={!selectedDeviceId || isTestingPlayback}
+            >
+              <Text style={styles.testButtonText}>
+                {isTestingPlayback ? 'Testing...' : 'Test Playback'}
+              </Text>
+            </TouchableOpacity>
 
             <TouchableOpacity
               style={styles.closeButton}
@@ -908,6 +939,21 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
+  testButton: {
+    backgroundColor: '#1DB954',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  testButtonDisabled: {
+    backgroundColor: '#ccc',
+  },
+  testButtonText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
   closeButton: {
     alignItems: 'center',
     padding: 8,

@@ -273,11 +273,17 @@ const SongStackScreen: React.FC<SongStackScreenProps> = ({ navigation }) => {
           </Text>
           <Text style={styles.albumName} numberOfLines={1}>{track.album.name}</Text>
         </View>
-        <View style={styles.trackActions}>
-          {/* Play on Spotify Button */}
-          
-          {/* Add Button */}
-          <TouchableOpacity
+                  <View style={styles.trackActions}>
+            {/* Play on Spotify Button */}
+            <TouchableOpacity
+              style={styles.testButton}
+              onPress={playOnSpotify}
+            >
+              <Text style={styles.testButtonText}>▶️</Text>
+            </TouchableOpacity>
+            
+            {/* Add Button */}
+            <TouchableOpacity
             style={styles.addButton}
             onPress={() => addSongToStack(track)}
             disabled={isLoading}
@@ -345,7 +351,50 @@ const SongStackScreen: React.FC<SongStackScreenProps> = ({ navigation }) => {
           </TouchableOpacity>
         </View>
 
-
+        {/* Test All Available Button */}
+        {searchResults.filter(t => t.preview_url).length > 0 && (
+          <View style={styles.testAllContainer}>
+            <TouchableOpacity
+              style={styles.testAllButton}
+              onPress={async () => {
+                const songsWithPreviews = searchResults.filter(t => t.preview_url);
+                Alert.alert(
+                  'Test All Available',
+                  `Test ${songsWithPreviews.length} songs with previews? Each will play for 10 seconds.`,
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { 
+                      text: 'Test All', 
+                      onPress: async () => {
+                        for (let i = 0; i < songsWithPreviews.length; i++) {
+                          const song = songsWithPreviews[i];
+                          try {
+                            console.log(`🎵 Testing ${i + 1}/${songsWithPreviews.length}: ${song.name}`);
+                            const { sound } = await Audio.Sound.createAsync(
+                              { uri: song.preview_url! },
+                              { shouldPlay: true, volume: 0.6 }
+                            );
+                            
+                            // Wait 12 seconds before next song (10s play + 2s gap)
+                            await new Promise(resolve => setTimeout(resolve, 12000));
+                            
+                            await sound.stopAsync();
+                            await sound.unloadAsync();
+                          } catch (error) {
+                            console.error(`Error testing ${song.name}:`, error);
+                          }
+                        }
+                        Alert.alert('Test Complete', 'Finished testing all available songs!');
+                      }
+                    }
+                  ]
+                );
+              }}
+            >
+              <Text style={styles.testAllButtonText}>🎵 Test All Available ({searchResults.filter(t => t.preview_url).length})</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {isSearching && (
           <View style={styles.loadingContainer}>
@@ -779,6 +828,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginLeft: 16,
   },
+  testButton: {
+    width: 40,
+    height: 40,
+    backgroundColor: '#32CD32',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#F5E6D3',
+    marginRight: 8,
+  },
+  testButtonDisabled: {
+    backgroundColor: '#999',
+  },
+  testButtonText: {
+    color: '#F5E6D3',
+    fontSize: 24,
+    fontWeight: 'bold',
+  },
+  testButtonTextDisabled: {
+    color: '#666',
+  },
 
   addButton: {
     width: 40,
@@ -1149,6 +1220,25 @@ const styles = StyleSheet.create({
     marginBottom: 5,
   },
   audioInfoHighlight: {
+    fontWeight: 'bold',
+  },
+  testAllContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+  },
+  testAllButton: {
+    backgroundColor: '#32CD32',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: '#F5E6D3',
+  },
+  testAllButtonText: {
+    color: '#F5E6D3',
+    fontSize: 16,
     fontWeight: 'bold',
   },
 
